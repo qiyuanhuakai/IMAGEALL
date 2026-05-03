@@ -8,12 +8,12 @@ defineProps<{
   aspectRatio: string
   width: number
   height: number
-  numImages: number
   seed: number
   sourceImageTitle: string | undefined
   sourceImageFilename: string | undefined
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
+  supportsCustomSize: boolean
   providerOptions: Record<string, string | number | boolean>
   providerOptionDefinitions: ProviderOptionDefinition[]
   apiKey: string
@@ -24,21 +24,39 @@ defineProps<{
   isExecutingRun: boolean
 }>()
 
-const emit = defineEmits<{
-  'update:selectedOperation': [value: OperationKind]
-  'update:prompt': [value: string]
-  'update:negativePrompt': [value: string]
-  'update:aspectRatio': [value: string]
-  'update:width': [value: number]
-  'update:height': [value: number]
-  'update:numImages': [value: number]
-  'update:seed': [value: number]
-  'apply:sizePreset': [value: { width: number; height: number }]
-  'update:providerOption': [payload: { id: string; value: string | number | boolean }]
-  'update:apiKey': [value: string]
-  'update:sourceImageFile': [file: File]
-  run: []
-}>()
+import { useI18n } from 'vue-i18n'
+
+const emit = defineEmits([
+  'update:selectedOperation',
+  'update:prompt',
+  'update:negativePrompt',
+  'update:aspectRatio',
+  'update:width',
+  'update:height',
+  'update:seed',
+  'apply:sizePreset',
+  'update:providerOption',
+  'update:apiKey',
+  'update:sourceImageFile',
+  'run',
+])
+
+const { t } = useI18n()
+
+function optionLabel(id: string): string {
+  return t(`providerOptions.${id}`, id)
+}
+
+function optionDesc(id: string): string {
+  return t(`providerOptions.${id}Desc`, '')
+}
+
+function onSizeSelect(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  const [w, h] = value.split('x').map(Number)
+  emit('update:width', w)
+  emit('update:height', h)
+}
 
 const operations: OperationKind[] = ['generate', 'edit', 'upscale']
 </script>
@@ -101,20 +119,25 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
         />
       </label>
 
-      <div class="field-grid">
-        <label class="field">
-          <span>{{ $t('inspector.aspectRatio') }}</span>
-          <input :value="aspectRatio" @input="emit('update:aspectRatio', ($event.target as HTMLInputElement).value)" />
-        </label>
-        <label class="field">
-          <span>{{ $t('inspector.numImages') }}</span>
-          <input
-            :value="numImages"
-            min="1"
-            type="number"
-            @input="emit('update:numImages', Number(($event.target as HTMLInputElement).value))"
-          />
-        </label>
+      <label class="field">
+        <span>{{ $t('inspector.size') }}</span>
+        <select
+          :value="`${width}x${height}`"
+          @change="onSizeSelect"
+          class="bb-select"
+        >
+          <option
+            v-for="preset in availableSizePresets"
+            :key="`${preset.width}x${preset.height}`"
+            :value="`${preset.width}x${preset.height}`"
+          >
+            {{ preset.width }} × {{ preset.height }}
+          </option>
+        </select>
+        <small v-if="aspectRatio">{{ $t('inspector.aspectRatio') }}: {{ aspectRatio }}</small>
+      </label>
+
+      <div v-if="supportsCustomSize" class="field-grid">
         <label class="field">
           <span>{{ $t('inspector.width') }}</span>
           <input :value="width" type="number" @input="emit('update:width', Number(($event.target as HTMLInputElement).value))" />
@@ -123,26 +146,12 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
           <span>{{ $t('inspector.height') }}</span>
           <input :value="height" type="number" @input="emit('update:height', Number(($event.target as HTMLInputElement).value))" />
         </label>
-        <label class="field field--full">
-          <span>{{ $t('inspector.seed') }}</span>
-          <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
-        </label>
       </div>
 
-      <div v-if="availableSizePresets.length" class="field">
-        <span>{{ $t('inspector.supportedSizes') }}</span>
-        <div class="pill-row">
-          <button
-            v-for="preset in availableSizePresets"
-            :key="`${preset.width}x${preset.height}`"
-            class="pill-button pill-button--size"
-            type="button"
-            @click="emit('apply:sizePreset', preset)"
-          >
-            {{ preset.width }} × {{ preset.height }}
-          </button>
-        </div>
-      </div>
+      <label class="field field--full">
+        <span>{{ $t('inspector.seed') }}</span>
+        <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
+      </label>
 
       <div class="source-chip">
         <span>{{ $t('inspector.sourceImage') }}</span>
@@ -171,7 +180,7 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
       </div>
 
       <label v-for="option in providerOptionDefinitions" :key="option.id" class="field">
-        <span>{{ option.label }}</span>
+        <span>{{ optionLabel(option.id) }}</span>
 
         <select
           v-if="option.control === 'select'"
@@ -205,10 +214,10 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
             type="checkbox"
             @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLInputElement).checked })"
           />
-          <span>{{ option.description }}</span>
+          <span>{{ optionDesc(option.id) }}</span>
         </label>
 
-        <small v-if="option.control !== 'boolean'">{{ option.description }}</small>
+        <small v-if="option.control !== 'boolean'">{{ optionDesc(option.id) }}</small>
       </label>
     </section>
 

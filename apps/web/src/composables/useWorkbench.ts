@@ -17,6 +17,15 @@ import {
 
 import { executePreparedRun, fetchBootstrap, prepareRun } from '../lib/api'
 
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b)
+}
+
+function ratioLabel(width: number, height: number): string {
+  const d = gcd(width, height)
+  return `${width / d}:${height / d}`
+}
+
 type ProviderOptionValue = string | number | boolean
 
 function normalizeProviderOptions(provider: ProviderManifest, modelId: string): Record<string, ProviderOptionValue> {
@@ -43,11 +52,16 @@ export function useWorkbench() {
   const aspectRatio = ref('4:3')
   const width = ref(1280)
   const height = ref(960)
-  const numImages = ref(2)
+  const numImages = ref(1)
   const seed = ref(94021)
 
   const providerOptions = ref<Record<string, ProviderOptionValue>>({})
   const apiKey = ref('')
+  const providerKeys = ref<Record<string, string>>({})
+  try {
+    const raw = localStorage.getItem('imageall_provider_keys')
+    if (raw) providerKeys.value = JSON.parse(raw)
+  } catch { /* ignore */ }
   const sourceImageDataUrl = ref('')
   const sourceImageFilename = ref('source.png')
   const latestPlan = ref<PreparedRunPlan>()
@@ -76,6 +90,16 @@ export function useWorkbench() {
   const recentOutputArtifacts = computed(() => artifacts.value.filter((artifact) => artifact.kind !== 'input').slice(-3).reverse())
   const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value) : []))
   const availableSizePresets = computed(() => activeModel.value?.constraints?.sizePresets ?? [])
+  const supportsCustomSize = computed(() => {
+    const provider = activeProvider.value
+    if (!provider) return true
+    return provider.capabilities.supportsCustomSize === true
+  })
+  const supportsNegativePrompt = computed(() => {
+    const provider = activeProvider.value
+    if (!provider) return true
+    return provider.capabilities.supportsNegativePrompt !== false
+  })
   const selectedSourceImageInput = computed<ImageInputSource[] | undefined>(() => {
     if (!sourceImageDataUrl.value.trim()) {
       return undefined
@@ -150,11 +174,12 @@ export function useWorkbench() {
 
   function buildRunInput(): UnifiedRunInput {
     const trimmedApiKey = apiKey.value.trim()
+    const savedKey = providerKeys.value[selectedProviderId.value] ?? ''
 
     return {
       providerId: selectedProviderId.value,
       modelId: selectedModelId.value,
-      auth: trimmedApiKey ? { apiKey: trimmedApiKey } : {},
+      auth: trimmedApiKey ? { apiKey: trimmedApiKey } : (savedKey ? { apiKey: savedKey } : {}),
       operation: buildOperationSpec(),
       ...(selectedOperation.value === 'edit' && selectedSourceImageInput.value
         ? { imageInputs: selectedSourceImageInput.value }
@@ -187,12 +212,14 @@ export function useWorkbench() {
     try {
       isExecutingRun.value = true
       const trimmedApiKey = apiKey.value.trim()
+      const savedKey = providerKeys.value[selectedProviderId.value] ?? ''
+      const effectiveKey = trimmedApiKey || savedKey
       const result = await executePreparedRun(
-        trimmedApiKey
+        effectiveKey
           ? {
               planId: latestPlan.value.id,
               auth: {
-                apiKey: trimmedApiKey,
+                apiKey: effectiveKey,
               },
             }
           : {
@@ -202,8 +229,15 @@ export function useWorkbench() {
 
       liveOutputs.value = result.outputs
       lastRunMessage.value = `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`
-      if (result.outputs[0]) {
-        selectedArtifactId.value = undefined
+
+      try {
+        const fresh = await fetchBootstrap()
+        bootstrap.value = fresh
+        if (fresh.artifacts.length > 0) {
+          selectedArtifactId.value = fresh.artifacts[0]?.id
+        }
+      } catch {
+        /* ignore bootstrap refresh errors */
       }
     } catch (runError) {
       lastRunError.value = runError instanceof Error ? runError.message : 'Failed to execute run'
@@ -265,6 +299,16 @@ export function useWorkbench() {
     syncSizeToModelConstraints()
   })
 
+  let aspectRatioTimer: ReturnType<typeof setTimeout> | undefined
+  watch([width, height], () => {
+    if (aspectRatioTimer) clearTimeout(aspectRatioTimer)
+    aspectRatioTimer = setTimeout(() => {
+      aspectRatio.value = ratioLabel(width.value, height.value)
+    }, 300)
+  })
+
+  const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
+
   async function loadBootstrap() {
     isLoading.value = true
 
@@ -286,6 +330,11 @@ export function useWorkbench() {
       isLoading.value = false
       applyProviderDefaults()
       syncSizeToModelConstraints()
+      const folder = localStorage.getItem('imageall_workspace_folder')
+      if (folder) {
+        const ws = bootstrap.value.workspaces[0]
+        if (ws) ws.name = folder.split('/').pop() ?? folder
+      }
     }
   }
 
@@ -310,6 +359,8 @@ export function useWorkbench() {
     recentOutputArtifacts,
     currentProviderOptions,
     availableSizePresets,
+    supportsCustomSize,
+    supportsNegativePrompt,
     selectedWorkspaceId,
     selectedArtifactId,
     selectedOperation,
@@ -324,6 +375,7 @@ export function useWorkbench() {
     numImages,
     seed,
     providerOptions,
+    providerKeys,
     apiKey,
     sourceImageDataUrl,
     sourceImageFilename,
@@ -336,6 +388,21 @@ export function useWorkbench() {
     liveOutputArtifacts,
     runPreparedExecution,
     updateSourceImage,
+    updateProviderKeys: (keys: Record<string, string>) => {
+      providerKeys.value = keys
+    },
+    setWorkspaceFolder: async (path: string) => {
+      localStorage.setItem('imageall_workspace_folder', path)
+      const ws = bootstrap.value.workspaces[0]
+      if (ws) ws.name = path.split('/').pop() ?? path
+      try {
+        await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/workspace/folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        })
+      } catch { /* ignore */ }
+    },
   }
 }
 
