@@ -213,6 +213,28 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
       errors.push('StepFun textMode must be a boolean when provided.')
     }
 
+    const steps = input.providerOptions?.steps
+    if (steps !== undefined) {
+      if (typeof steps !== 'number' || !Number.isInteger(steps)) {
+        errors.push('StepFun steps must be an integer.')
+      } else if (input.modelId === 'step-image-edit-2' && (steps < 1 || steps > 50)) {
+        errors.push('StepFun step-image-edit-2 steps must be between 1 and 50.')
+      } else if ((input.modelId === 'step-1x-medium' || input.modelId === 'step-1x-edit') && (steps < 1 || steps > 100)) {
+        errors.push(`StepFun ${input.modelId} steps must be between 1 and 100.`)
+      }
+    }
+
+    const cfgScale = input.providerOptions?.cfgScale
+    if (cfgScale !== undefined) {
+      if (typeof cfgScale !== 'number') {
+        errors.push('StepFun cfgScale must be a number.')
+      } else if (input.modelId === 'step-image-edit-2' && (cfgScale < 1.0 || cfgScale > 10.0)) {
+        errors.push('StepFun step-image-edit-2 cfg_scale must be between 1.0 and 10.0.')
+      } else if ((input.modelId === 'step-1x-medium' || input.modelId === 'step-1x-edit') && (cfgScale < 1.0 || cfgScale > 10.0)) {
+        errors.push(`StepFun ${input.modelId} cfg_scale must be between 1.0 and 10.0.`)
+      }
+    }
+
     return errors.length > 0 ? fail(...errors) : ok()
   }
 
@@ -258,6 +280,14 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
 
       if (input.operation.size) {
         formData.set('size', toStepFunSize(input.modelId, input.operation.size) ?? '')
+      }
+
+      if (input.providerOptions?.steps !== undefined) {
+        formData.set('steps', String(input.providerOptions.steps))
+      }
+
+      if (input.providerOptions?.cfgScale !== undefined) {
+        formData.set('cfg_scale', String(input.providerOptions.cfgScale))
       }
 
       return {

@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "bun run --cwd apps/server dev & bun run --cwd apps/web dev",
     "dev:web": "bun run --cwd apps/web dev",
     "dev:server": "bun run --cwd apps/server dev",
     "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd apps/server typecheck && bun run --cwd apps/web typecheck",

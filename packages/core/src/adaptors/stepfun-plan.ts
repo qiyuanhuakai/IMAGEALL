@@ -126,6 +126,24 @@ export class StepFunPlanAdaptor implements ImageProviderAdaptor {
       }
     }
 
+    const steps = input.providerOptions?.steps
+    if (steps !== undefined) {
+      if (typeof steps !== 'number' || !Number.isInteger(steps)) {
+        errors.push('StepFun Plan steps must be an integer.')
+      } else if (steps < 1 || steps > 50) {
+        errors.push('StepFun Plan step-image-edit-2 steps must be between 1 and 50.')
+      }
+    }
+
+    const cfgScale = input.providerOptions?.cfgScale
+    if (cfgScale !== undefined) {
+      if (typeof cfgScale !== 'number') {
+        errors.push('StepFun Plan cfgScale must be a number.')
+      } else if (cfgScale < 1.0 || cfgScale > 10.0) {
+        errors.push('StepFun Plan step-image-edit-2 cfg_scale must be between 1.0 and 10.0.')
+      }
+    }
+
     return errors.length > 0 ? fail(...errors) : ok()
   }
 
@@ -168,6 +186,14 @@ export class StepFunPlanAdaptor implements ImageProviderAdaptor {
 
     if (typeof input.providerOptions?.textMode === 'boolean') {
       body.text_mode = input.providerOptions.textMode
+    }
+
+    if (input.providerOptions?.steps !== undefined) {
+      body.steps = input.providerOptions.steps
+    }
+
+    if (input.providerOptions?.cfgScale !== undefined) {
+      body.cfg_scale = input.providerOptions.cfgScale
     }
 
     if (input.operation.kind === 'edit') {

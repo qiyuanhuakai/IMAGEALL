@@ -32,6 +32,106 @@ describe('StepFunPlanAdaptor', () => {
     })
   })
 
+  it('includes steps and cfg_scale in generate requests', async () => {
+    const input: UnifiedRunInput = {
+      providerId: 'stepfun-plan',
+      modelId: 'step-image-edit-2',
+      auth: { apiKey: 'step-key' },
+      operation: {
+        kind: 'generate',
+        prompt: 'A poster with bold text',
+        size: { width: 1024, height: 1024 },
+        responseFormat: 'base64',
+      },
+      providerOptions: {
+        textMode: true,
+        steps: 30,
+        cfgScale: 5.0,
+      },
+    }
+
+    const request = await stepfunPlanAdaptor.buildRequest(input)
+
+    expect(request.body).toEqual({
+      model: 'step-image-edit-2',
+      prompt: 'A poster with bold text',
+      response_format: 'b64_json',
+      size: '1024x1024',
+      text_mode: true,
+      steps: 30,
+      cfg_scale: 5.0,
+    })
+  })
+
+  it('includes steps and cfg_scale in edit requests', async () => {
+    const input: UnifiedRunInput = {
+      providerId: 'stepfun-plan',
+      modelId: 'step-image-edit-2',
+      auth: { apiKey: 'step-key' },
+      operation: {
+        kind: 'edit',
+        prompt: 'Add text overlay',
+        sourceArtifactId: 'artifact-1',
+        negativePrompt: 'blurry',
+      },
+      imageInputs: [
+        {
+          kind: 'url',
+          value: 'https://example.com/source.png',
+        },
+      ],
+      providerOptions: {
+        steps: 15,
+        cfgScale: 3.0,
+      },
+    }
+
+    const request = await stepfunPlanAdaptor.buildRequest(input)
+
+    expect(request.url).toBe('https://api.stepfun.com/step_plan/v1/images/edits')
+    expect(request.body).toEqual({
+      model: 'step-image-edit-2',
+      prompt: 'Add text overlay',
+      response_format: 'url',
+      negative_prompt: 'blurry',
+      image: 'https://example.com/source.png',
+      steps: 15,
+      cfg_scale: 3.0,
+    })
+  })
+
+  it('validates steps range for step-image-edit-2', () => {
+    const base = (steps: number) => ({
+      providerId: 'stepfun-plan',
+      modelId: 'step-image-edit-2',
+      auth: { apiKey: 'step-key' },
+      operation: { kind: 'generate' as const, prompt: 'test' },
+      providerOptions: { steps },
+    })
+
+    expect(stepfunPlanAdaptor.validateOperation(base(0)).ok).toBe(false)
+    expect(stepfunPlanAdaptor.validateOperation(base(51)).ok).toBe(false)
+    expect(stepfunPlanAdaptor.validateOperation(base(1)).ok).toBe(true)
+    expect(stepfunPlanAdaptor.validateOperation(base(50)).ok).toBe(true)
+    expect(stepfunPlanAdaptor.validateOperation(base(25)).ok).toBe(true)
+  })
+
+  it('validates cfg_scale range for step-image-edit-2', () => {
+    const base = (cfgScale: number) => ({
+      providerId: 'stepfun-plan',
+      modelId: 'step-image-edit-2',
+      auth: { apiKey: 'step-key' },
+      operation: { kind: 'generate' as const, prompt: 'test' },
+      providerOptions: { cfgScale },
+    })
+
+    expect(stepfunPlanAdaptor.validateOperation(base(0.5)).ok).toBe(false)
+    expect(stepfunPlanAdaptor.validateOperation(base(10.5)).ok).toBe(false)
+    expect(stepfunPlanAdaptor.validateOperation(base(1.0)).ok).toBe(true)
+    expect(stepfunPlanAdaptor.validateOperation(base(10.0)).ok).toBe(true)
+    expect(stepfunPlanAdaptor.validateOperation(base(7.5)).ok).toBe(true)
+  })
+
   it('rejects non-step-image-edit-2 models', () => {
     const result = stepfunPlanAdaptor.validateOperation({
       providerId: 'stepfun-plan',
@@ -44,6 +144,6 @@ describe('StepFunPlanAdaptor', () => {
     })
 
     expect(result.ok).toBe(false)
-    expect(result.errors).toContain('StepFun Plan currently supports only step-image-edit-2.')
+    expect(result.errors.some((e) => e.includes('step-image-edit-2') || e.includes('Unsupported'))).toBe(true)
   })
 })
