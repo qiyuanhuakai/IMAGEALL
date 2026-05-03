@@ -1,0 +1,361 @@
+import { computed, ref, watch } from 'vue'
+
+import {
+  type ImageInputSource,
+  type OperationSpec,
+  type PreparedRunPlan,
+  type UnifiedRunInput,
+  createDemoBootstrap,
+  createProviderRegistry,
+  getProviderOptions,
+  type Artifact,
+  type LocaleCode,
+  type OperationKind,
+  type ProviderManifest,
+  type WorkbenchBootstrap,
+} from '@imageall/core'
+
+import { executePreparedRun, fetchBootstrap, prepareRun } from '../lib/api'
+
+type ProviderOptionValue = string | number | boolean
+
+function normalizeProviderOptions(provider: ProviderManifest, modelId: string): Record<string, ProviderOptionValue> {
+  return Object.fromEntries(
+    getProviderOptions(provider, modelId).map((option) => [option.id, option.defaultValue]),
+  )
+}
+
+export function useWorkbench() {
+  const bootstrap = ref<WorkbenchBootstrap>(createDemoBootstrap())
+  const isLoading = ref(true)
+  const isUsingFallbackData = ref(true)
+  const error = ref<string>()
+
+  const selectedWorkspaceId = ref(bootstrap.value.selectedWorkspaceId)
+  const selectedArtifactId = ref(bootstrap.value.workspaces[0]?.uiState.selectedArtifactId)
+  const selectedOperation = ref<OperationKind>(bootstrap.value.workspaces[0]?.uiState.activeOperation ?? 'generate')
+  const selectedProviderId = ref(bootstrap.value.workspaces[0]?.uiState.activeProviderId ?? bootstrap.value.providers[0]?.id ?? '')
+  const selectedModelId = ref(bootstrap.value.workspaces[0]?.uiState.activeModelId ?? bootstrap.value.providers[0]?.defaultModelId ?? '')
+  const selectedLocale = ref<LocaleCode>(bootstrap.value.workspaces[0]?.locale ?? 'zh-CN')
+
+  const prompt = ref('A multilingual poster study with calm editorial rhythm and strong visual hierarchy.')
+  const negativePrompt = ref('muddy contrast, broken text, generic composition')
+  const aspectRatio = ref('4:3')
+  const width = ref(1280)
+  const height = ref(960)
+  const numImages = ref(2)
+  const seed = ref(94021)
+
+  const providerOptions = ref<Record<string, ProviderOptionValue>>({})
+  const apiKey = ref('')
+  const sourceImageDataUrl = ref('')
+  const sourceImageFilename = ref('source.png')
+  const latestPlan = ref<PreparedRunPlan>()
+  const lastRunError = ref<string>()
+  const lastRunMessage = ref<string>()
+  const isPreparingRun = ref(false)
+  const isExecutingRun = ref(false)
+  const liveOutputs = ref<Array<{ uri?: string; base64?: string; mimeType?: string; seed?: number }>>([])
+
+  const registry = computed(() => createProviderRegistry(bootstrap.value.providers))
+  const locales = computed(() => bootstrap.value.locales)
+  const providers = computed(() => bootstrap.value.providers)
+  const workspaces = computed(() => bootstrap.value.workspaces)
+  const workspace = computed(() => workspaces.value.find((entry) => entry.id === selectedWorkspaceId.value) ?? workspaces.value[0])
+  const artifacts = computed(() => bootstrap.value.artifacts)
+  const runs = computed(() => bootstrap.value.runs)
+  const activeProvider = computed(() => providers.value.find((provider) => provider.id === selectedProviderId.value) ?? providers.value[0])
+  const activeModel = computed(() => activeProvider.value?.models.find((model) => model.id === selectedModelId.value) ?? activeProvider.value?.models[0])
+  const selectedArtifact = computed(() => artifacts.value.find((artifact) => artifact.id === selectedArtifactId.value) ?? artifacts.value[0])
+  const compareArtifacts = computed(() => {
+    const compareIds = workspace.value?.uiState.compareArtifactIds ?? []
+    return compareIds
+      .map((artifactId) => artifacts.value.find((artifact) => artifact.id === artifactId))
+      .filter((artifact): artifact is Artifact => Boolean(artifact))
+  })
+  const recentOutputArtifacts = computed(() => artifacts.value.filter((artifact) => artifact.kind !== 'input').slice(-3).reverse())
+  const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value) : []))
+  const availableSizePresets = computed(() => activeModel.value?.constraints?.sizePresets ?? [])
+  const selectedSourceImageInput = computed<ImageInputSource[] | undefined>(() => {
+    if (!sourceImageDataUrl.value.trim()) {
+      return undefined
+    }
+
+    return [
+      {
+        kind: 'data-url',
+        value: sourceImageDataUrl.value,
+        filename: sourceImageFilename.value,
+      },
+    ]
+  })
+  const liveOutputArtifacts = computed(() =>
+    liveOutputs.value.map((output, index): Artifact => {
+      const metadata: Artifact['metadata'] = {
+        provider: selectedProviderId.value,
+        model: selectedModelId.value,
+        prompt: prompt.value,
+        ...(output.seed !== undefined ? { seed: output.seed } : {}),
+      }
+
+      return {
+        id: `live-output-${index}`,
+        workspaceId: workspace.value?.id ?? 'live',
+        kind: 'generated',
+        title: `${activeProvider.value?.label ?? 'Provider'} live output ${index + 1}`,
+        mimeType: output.base64 ? 'image/png' : 'image/jpeg',
+        width: width.value,
+        height: height.value,
+        uri: output.uri ?? `data:image/png;base64,${output.base64}`,
+        createdAt: new Date().toISOString(),
+        metadata,
+      }
+    }),
+  )
+
+  function buildOperationSpec(): OperationSpec {
+    const base = {
+      prompt: prompt.value,
+      seed: seed.value,
+      numImages: numImages.value,
+      responseFormat: 'base64' as const,
+      ...(negativePrompt.value ? { negativePrompt: negativePrompt.value } : {}),
+      ...(aspectRatio.value ? { aspectRatio: aspectRatio.value } : {}),
+    }
+
+    if (selectedOperation.value === 'edit') {
+      return {
+        kind: 'edit',
+        sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
+        ...(selectedModelId.value === 'step-image-edit-2' ? {} : { size: { width: width.value, height: height.value } }),
+        ...base,
+      }
+    }
+
+    if (selectedOperation.value === 'upscale') {
+      return {
+        kind: 'upscale',
+        sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
+        size: { width: width.value, height: height.value },
+        ...base,
+      }
+    }
+
+    return {
+      kind: 'generate',
+      size: { width: width.value, height: height.value },
+      ...base,
+    }
+  }
+
+  function buildRunInput(): UnifiedRunInput {
+    const trimmedApiKey = apiKey.value.trim()
+
+    return {
+      providerId: selectedProviderId.value,
+      modelId: selectedModelId.value,
+      auth: trimmedApiKey ? { apiKey: trimmedApiKey } : {},
+      operation: buildOperationSpec(),
+      ...(selectedOperation.value === 'edit' && selectedSourceImageInput.value
+        ? { imageInputs: selectedSourceImageInput.value }
+        : {}),
+      providerOptions: providerOptions.value,
+    }
+  }
+
+  async function runPreparedExecution() {
+    lastRunError.value = undefined
+    lastRunMessage.value = undefined
+    latestPlan.value = undefined
+
+    try {
+      isPreparingRun.value = true
+      const plan = await prepareRun(buildRunInput())
+      latestPlan.value = plan
+      lastRunMessage.value = `Prepared ${plan.providerId}/${plan.modelId} run plan.`
+    } catch (runError) {
+      lastRunError.value = runError instanceof Error ? runError.message : 'Failed to prepare run'
+      return
+    } finally {
+      isPreparingRun.value = false
+    }
+
+    if (!latestPlan.value) {
+      return
+    }
+
+    try {
+      isExecutingRun.value = true
+      const trimmedApiKey = apiKey.value.trim()
+      const result = await executePreparedRun(
+        trimmedApiKey
+          ? {
+              planId: latestPlan.value.id,
+              auth: {
+                apiKey: trimmedApiKey,
+              },
+            }
+          : {
+              planId: latestPlan.value.id,
+            },
+      )
+
+      liveOutputs.value = result.outputs
+      lastRunMessage.value = `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`
+      if (result.outputs[0]) {
+        selectedArtifactId.value = undefined
+      }
+    } catch (runError) {
+      lastRunError.value = runError instanceof Error ? runError.message : 'Failed to execute run'
+    } finally {
+      isExecutingRun.value = false
+    }
+  }
+
+  async function updateSourceImage(file: File) {
+    const dataUrl = await fileToDataUrl(file)
+    sourceImageDataUrl.value = dataUrl
+    sourceImageFilename.value = file.name
+  }
+
+  function applyProviderDefaults() {
+    if (!activeProvider.value || !selectedModelId.value) {
+      providerOptions.value = {}
+      return
+    }
+
+    providerOptions.value = normalizeProviderOptions(activeProvider.value, selectedModelId.value)
+  }
+
+  function syncSizeToModelConstraints() {
+    const sizePresets = activeModel.value?.constraints?.sizePresets
+    if (!sizePresets || sizePresets.length === 0) {
+      return
+    }
+
+    const currentMatchesPreset = sizePresets.some((preset) => preset.width === width.value && preset.height === height.value)
+    if (currentMatchesPreset) {
+      return
+    }
+
+    const firstPreset = sizePresets[0]
+    if (!firstPreset) {
+      return
+    }
+
+    width.value = firstPreset.width
+    height.value = firstPreset.height
+  }
+
+  watch(activeProvider, (provider) => {
+    if (!provider) {
+      return
+    }
+
+    if (!provider.models.some((model) => model.id === selectedModelId.value)) {
+      selectedModelId.value = provider.defaultModelId
+    }
+
+    applyProviderDefaults()
+    syncSizeToModelConstraints()
+  })
+
+  watch(selectedModelId, () => {
+    applyProviderDefaults()
+    syncSizeToModelConstraints()
+  })
+
+  async function loadBootstrap() {
+    isLoading.value = true
+
+    try {
+      const response = await fetchBootstrap()
+      bootstrap.value = response
+      selectedWorkspaceId.value = response.selectedWorkspaceId
+      selectedLocale.value = response.workspaces[0]?.locale ?? selectedLocale.value
+      selectedArtifactId.value = response.workspaces[0]?.uiState.selectedArtifactId
+      selectedOperation.value = response.workspaces[0]?.uiState.activeOperation ?? selectedOperation.value
+      selectedProviderId.value = response.workspaces[0]?.uiState.activeProviderId ?? selectedProviderId.value
+      selectedModelId.value = response.workspaces[0]?.uiState.activeModelId ?? selectedModelId.value
+      isUsingFallbackData.value = false
+    } catch (loadError) {
+      error.value = loadError instanceof Error ? loadError.message : 'Unknown bootstrap error'
+      bootstrap.value = createDemoBootstrap()
+      isUsingFallbackData.value = true
+    } finally {
+      isLoading.value = false
+      applyProviderDefaults()
+      syncSizeToModelConstraints()
+    }
+  }
+
+  void loadBootstrap()
+
+  return {
+    isLoading,
+    isUsingFallbackData,
+    error,
+    bootstrap,
+    locales,
+    providers,
+    registry,
+    workspaces,
+    workspace,
+    artifacts,
+    runs,
+    activeProvider,
+    activeModel,
+    selectedArtifact,
+    compareArtifacts,
+    recentOutputArtifacts,
+    currentProviderOptions,
+    availableSizePresets,
+    selectedWorkspaceId,
+    selectedArtifactId,
+    selectedOperation,
+    selectedProviderId,
+    selectedModelId,
+    selectedLocale,
+    prompt,
+    negativePrompt,
+    aspectRatio,
+    width,
+    height,
+    numImages,
+    seed,
+    providerOptions,
+    apiKey,
+    sourceImageDataUrl,
+    sourceImageFilename,
+    latestPlan,
+    lastRunError,
+    lastRunMessage,
+    isPreparingRun,
+    isExecutingRun,
+    liveOutputs,
+    liveOutputArtifacts,
+    runPreparedExecution,
+    updateSourceImage,
+  }
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+
+      reject(new Error('Failed to read image file.'))
+    }
+
+    reader.onerror = () => {
+      reject(new Error('Failed to read image file.'))
+    }
+
+    reader.readAsDataURL(file)
+  })
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@imageall/core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test ./src",
+    "build": "bun build ./src/index.ts --outdir ./dist --format esm --target browser"
+  }
+}
