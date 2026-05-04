@@ -60,13 +60,15 @@ function stopResize() {
       :selected-locale="workbench.selectedLocale.value"
       :using-fallback-data="workbench.isUsingFallbackData.value"
       :is-restoring-workspace="workbench.isRestoringWorkspace.value"
-      :restoration-status="workbench.restorationStatus.value"
-      :restoration-error="workbench.restorationError.value"
       :workspace-path="workbench.workspacePath.value"
+      :system-messages="workbench.systemMessages.value"
+      :latest-system-message="workbench.systemMessages.value[0] ?? null"
       @update:selected-locale="workbench.selectedLocale.value = $event"
       @update:selected-workspace-id="workbench.selectedWorkspaceId.value = $event"
       @update:provider-keys="workbench.updateProviderKeys($event)"
       @select:workspace-folder="workbench.setWorkspaceFolder($event)"
+      @dismiss:system-message="workbench.dismissSystemMessage($event)"
+      @clear:system-messages="workbench.clearSystemMessages()"
     />
 
     <main class="workbench-grid">

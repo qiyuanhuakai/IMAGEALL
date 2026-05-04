@@ -1,11 +1,13 @@
 export default {
-  app: {
+   app: {
     title: 'ImageAll',
     subtitle: 'A multilingual image workbench with honest provider adaptors.',
     statusDesign: 'Founding prototype',
     usingFallback: 'Using local bootstrap data',
     save: 'Save',
     loading: 'Loading...',
+    dismiss: 'Dismiss',
+    systemMessage: 'System',
   },
   topbar: {
     workspace: 'Workspace',
@@ -124,5 +126,19 @@ export default {
     succeeded: 'Succeeded',
     failed: 'Failed',
     cancelled: 'Cancelled',
+  },
+  systemMessages: {
+    info: 'Info',
+    warning: 'Warning',
+    error: 'Error',
+    success: 'Success',
+    clearAll: 'Clear all',
+    noMessages: 'No system messages',
+    fromRun: 'Run',
+    fromWorkspace: 'Workspace',
+    fromProvider: 'Provider',
+    fromVault: 'Vault',
+    fromStorage: 'Storage',
+    fromBootstrap: 'System',
   },
 } as const

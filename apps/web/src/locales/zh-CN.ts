@@ -1,11 +1,13 @@
 export default {
-  app: {
+   app: {
     title: 'ImageAll',
     subtitle: '一个带有诚实 provider adaptor 的多语言图像工作台。',
     statusDesign: '设计中原型',
     usingFallback: '当前使用本地演示数据',
     save: '保存',
     loading: '加载中...',
+    dismiss: '忽略',
+    systemMessage: '系统',
   },
   topbar: {
     workspace: '工作空间',
@@ -124,5 +126,19 @@ export default {
     succeeded: '成功',
     failed: '失败',
     cancelled: '已取消',
+  },
+  systemMessages: {
+    info: '提示',
+    warning: '警告',
+    error: '错误',
+    success: '成功',
+    clearAll: '清除全部',
+    noMessages: '暂无系统消息',
+    fromRun: '运行',
+    fromWorkspace: '工作空间',
+    fromProvider: '提供方',
+    fromVault: '保险库',
+    fromStorage: '存储',
+    fromBootstrap: '系统',
   },
 } as const

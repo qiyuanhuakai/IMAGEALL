@@ -74,6 +74,39 @@ export function useWorkbench() {
   const isExecutingRun = ref(false)
   const liveOutputs = ref<Array<{ uri?: string; base64?: string; mimeType?: string; seed?: number }>>([])
 
+  type SystemMessageLevel = 'info' | 'warning' | 'error' | 'success'
+
+  interface SystemMessage {
+    id: string
+    level: SystemMessageLevel
+    text: string
+    timestamp: string
+    source?: string
+  }
+
+  const systemMessages = ref<SystemMessage[]>([])
+  let messageIdCounter = 0
+
+  function addSystemMessage(level: SystemMessageLevel, text: string, source?: string) {
+    messageIdCounter++
+    const id = `sysmsg-${messageIdCounter}-${Date.now()}`
+    const msg: SystemMessage = { id, level, text, timestamp: new Date().toISOString() }
+    if (source !== undefined) msg.source = source
+    systemMessages.value = [msg, ...systemMessages.value]
+    // Keep only latest 50 messages
+    if (systemMessages.value.length > 50) {
+      systemMessages.value = systemMessages.value.slice(0, 50)
+    }
+  }
+
+  function clearSystemMessages() {
+    systemMessages.value = []
+  }
+
+  function dismissSystemMessage(id: string) {
+    systemMessages.value = systemMessages.value.filter(m => m.id !== id)
+  }
+
   const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
 
   const isRestoringWorkspace = ref(false)
@@ -223,8 +256,10 @@ export function useWorkbench() {
       const plan = await prepareRun(buildRunInput())
       latestPlan.value = plan
       lastRunMessage.value = `Prepared ${plan.providerId}/${plan.modelId} run plan.`
+      addSystemMessage('info', `Prepared ${plan.providerId}/${plan.modelId} run plan.`, 'run')
     } catch (runError) {
       lastRunError.value = runError instanceof Error ? runError.message : 'Failed to prepare run'
+      addSystemMessage('error', lastRunError.value!, 'run')
       return
     } finally {
       isPreparingRun.value = false
@@ -254,6 +289,7 @@ export function useWorkbench() {
 
       liveOutputs.value = result.outputs
       lastRunMessage.value = `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`
+      addSystemMessage('success', `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`, 'run')
 
       try {
         const fresh = await fetchBootstrap()
@@ -266,6 +302,7 @@ export function useWorkbench() {
       }
     } catch (runError) {
       lastRunError.value = runError instanceof Error ? runError.message : 'Failed to execute run'
+      addSystemMessage('error', lastRunError.value!, 'run')
     } finally {
       isExecutingRun.value = false
     }
@@ -366,6 +403,7 @@ export function useWorkbench() {
       isUsingFallbackData.value = false
     } catch (loadError) {
       error.value = loadError instanceof Error ? loadError.message : 'Unknown bootstrap error'
+      addSystemMessage('error', error.value ?? 'Unknown bootstrap error', 'bootstrap')
       bootstrap.value = createDemoBootstrap()
       isUsingFallbackData.value = true
     } finally {
@@ -478,12 +516,14 @@ export function useWorkbench() {
 
           const warnings = data.warnings?.length ? ` (${data.warnings.length} warnings)` : ''
           restorationStatus.value = `Restored ${artifactCount} artifacts and ${runCount} runs from workspace${warnings}`
+          addSystemMessage('success', restorationStatus.value, 'workspace')
         } else if (data.ok) {
           bootstrap.value.artifacts = []
           bootstrap.value.runs = []
         }
       } catch (error) {
         restorationError.value = error instanceof Error ? error.message : 'Failed to set workspace folder'
+        addSystemMessage('error', restorationError.value!, 'workspace')
       }
     },
     isRestoringWorkspace,
@@ -491,6 +531,10 @@ export function useWorkbench() {
     restorationError,
     workspacePath,
     attemptWorkspaceRestore,
+    systemMessages,
+    addSystemMessage,
+    clearSystemMessages,
+    dismissSystemMessage,
   }
 
   async function attemptWorkspaceRestore(path: string) {
@@ -522,11 +566,14 @@ export function useWorkbench() {
 
         const warnings = restored.warnings.length > 0 ? ` (${restored.warnings.length} warnings)` : ''
         restorationStatus.value = `Restored ${restored.artifacts.length} artifacts and ${restored.runs.length} runs from workspace${warnings}`
+        addSystemMessage('success', restorationStatus.value, 'workspace')
       } else {
         restorationStatus.value = 'No persisted data in this folder'
+        addSystemMessage('info', restorationStatus.value, 'workspace')
       }
     } catch (error) {
       restorationError.value = error instanceof Error ? error.message : 'Failed to restore workspace'
+      addSystemMessage('error', restorationError.value!, 'workspace')
     } finally {
       isRestoringWorkspace.value = false
     }

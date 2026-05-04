@@ -1,8 +1,19 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { LocaleCode, LocaleOption, ProviderManifest, Workspace } from '@imageall/core'
 import { saveProviderKeys, loadProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
 import { registerKey, removeKey, listVaultKeys, type KeyListItem } from '../lib/keyVaultClient'
+
+export interface SystemMessage {
+  id: string
+  level: 'info' | 'warning' | 'error' | 'success'
+  text: string
+  timestamp: string
+  source?: string
+}
+
+type SystemMessageLevel = SystemMessage['level']
 
 const props = defineProps<{
   locales: LocaleOption[]
@@ -12,16 +23,20 @@ const props = defineProps<{
   selectedLocale: LocaleCode
   usingFallbackData: boolean
   isRestoringWorkspace?: boolean
-  restorationStatus: string | undefined
-  restorationError: string | undefined
   workspacePath: string | undefined
+  systemMessages?: SystemMessage[]
+  latestSystemMessage?: SystemMessage | null
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:selectedWorkspaceId': [value: string]
   'update:selectedLocale': [value: LocaleCode]
   'update:providerKeys': [keys: Record<string, string>]
   'select:workspaceFolder': [path: string]
+  'dismiss:systemMessage': [id: string]
+  'clear:systemMessages': []
 }>()
 
 const showSettings = ref(false)
@@ -209,6 +224,20 @@ async function removeFromVault(keyRef: string) {
       <h1>ImageAll</h1>
     </div>
 
+    <!-- System Messages Bar -->
+    <div v-if="latestSystemMessage" class="topbar__system-message" :class="`topbar__system-message--${latestSystemMessage.level}`">
+      <span class="topbar__system-message-icon">
+        <svg v-if="latestSystemMessage.level === 'error'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <svg v-else-if="latestSystemMessage.level === 'warning'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <svg v-else-if="latestSystemMessage.level === 'success'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+      <span class="topbar__system-message-text">{{ latestSystemMessage.text }}</span>
+      <button class="topbar__system-message-close" type="button" :title="$t('app.dismiss')" @click="emit('dismiss:systemMessage', latestSystemMessage.id)">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
      <div class="topbar__right">
        <span v-if="usingFallbackData" class="status-chip status-chip--muted">{{ $t('app.usingFallback') }}</span>
 
@@ -217,16 +246,10 @@ async function removeFromVault(keyRef: string) {
          📁 {{ workspacePath.split('/').pop() }}
        </span>
 
-       <!-- Restoration status -->
-       <span v-if="isRestoringWorkspace" class="status-chip status-chip--loading">
-         {{ $t('workspace.restoring') }}
-       </span>
-       <span v-else-if="restorationStatus" class="status-chip status-chip--success">
-         {{ restorationStatus }}
-       </span>
-       <span v-else-if="restorationError" class="status-chip status-chip--error">
-         {{ restorationError }}
-       </span>
+        <!-- Restoration status (loading only; success/error shown in system message bar) -->
+        <span v-if="isRestoringWorkspace" class="status-chip status-chip--loading">
+          {{ $t('workspace.restoring') }}
+        </span>
 
        <button class="icon-btn" type="button" :title="$t('topbar.providers')" @click.stop="openProviders">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -351,19 +374,19 @@ async function removeFromVault(keyRef: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: auto;
+  height: auto;
   padding: 0;
   border: none;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(237, 243, 255, 0.7);
+  border-radius: 0;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.55);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: transparent;
   color: #edf3ff;
 }
 
@@ -682,5 +705,90 @@ async function removeFromVault(keyRef: string) {
 .status-chip--error {
   background: rgba(240, 80, 80, 0.15);
   color: #f87171;
+}
+
+/* ─── System Message Bar ───────────────────────────────────── */
+
+.topbar__system-message {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 360px;
+  margin: 0 0.5rem 0 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: sysmsg-fade-in 0.2s ease-out;
+}
+
+@keyframes sysmsg-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.topbar__system-message--info {
+  background: rgba(100, 140, 255, 0.08);
+  border-color: rgba(100, 140, 255, 0.18);
+  color: #b8c8f8;
+}
+
+.topbar__system-message--success {
+  background: rgba(40, 190, 120, 0.08);
+  border-color: rgba(40, 190, 120, 0.18);
+  color: #6de8a8;
+}
+
+.topbar__system-message--warning {
+  background: rgba(240, 180, 60, 0.08);
+  border-color: rgba(240, 180, 60, 0.18);
+  color: #f0c040;
+}
+
+.topbar__system-message--error {
+  background: rgba(240, 80, 80, 0.08);
+  border-color: rgba(240, 80, 80, 0.18);
+  color: #f87171;
+}
+
+.topbar__system-message-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.topbar__system-message-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__system-message-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.4);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.topbar__system-message-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #edf3ff;
 }
 </style>
