@@ -180,6 +180,15 @@ async function registerToVault(providerId: string, apiKey: string) {
   }
 }
 
+function formatVaultTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return iso
+  }
+}
+
 async function removeFromVault(keyRef: string) {
   vaultLoading.value = true
   try {
@@ -288,14 +297,50 @@ async function removeFromVault(keyRef: string) {
         </div>
         <label v-for="entry in providerKeys" :key="entry.providerId" class="dropdown-field">
           <span>{{ entry.label }}</span>
-          <input
-            v-model="entry.value"
-            type="password"
-            :placeholder="entry.envKey"
-            class="dropdown-input"
-          />
+          <div class="dropdown-field-row">
+            <input
+              v-model="entry.value"
+              type="password"
+              :placeholder="entry.envKey"
+              class="dropdown-input"
+            />
+            <button
+              v-if="entry.value.trim()"
+              class="dropdown-vault-btn"
+              type="button"
+              :title="$t('topbar.vaultRegister')"
+              @click="registerToVault(entry.providerId, entry.value.trim())"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            </button>
+          </div>
         </label>
         <button class="dropdown-save-btn" type="button" @click="saveProviderKeysToStorage">{{ $t('app.save') }}</button>
+
+        <div class="dropdown-divider"></div>
+
+        <p class="dropdown-title dropdown-title--sub">{{ $t('topbar.vault') }}</p>
+        <p class="dropdown-hint">{{ $t('topbar.vaultDesc') }}</p>
+        <div v-if="vaultLoading" class="dropdown-loading">{{ $t('app.loading') }}</div>
+        <div v-else-if="vaultKeys.length === 0" class="dropdown-hint">{{ $t('topbar.vaultEmpty') }}</div>
+        <div v-else class="vault-key-list">
+          <div v-for="vk in vaultKeys" :key="vk.keyRef" class="vault-key-item">
+            <div class="vault-key-info">
+              <span class="vault-key-provider">{{ vk.providerId }}</span>
+              <span class="vault-key-ref">{{ vk.keyRef }}</span>
+              <span v-if="vk.lastUsedAt" class="vault-key-time">{{ formatVaultTime(vk.lastUsedAt) }}</span>
+            </div>
+            <button class="vault-key-remove" type="button" :title="$t('topbar.vaultRemove')" @click="removeFromVault(vk.keyRef)">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -399,6 +444,132 @@ async function removeFromVault(keyRef: string) {
   background: rgba(7, 17, 28, 0.8);
   color: #edf3ff;
   width: 100%;
+}
+
+.dropdown-field-row {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.dropdown-field-row .dropdown-input {
+  flex: 1;
+}
+
+.dropdown-vault-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(146, 169, 214, 0.2);
+  border-radius: 6px;
+  background: rgba(7, 17, 28, 0.8);
+  color: rgba(237, 243, 255, 0.5);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.dropdown-vault-btn:hover {
+  background: rgba(100, 140, 255, 0.2);
+  color: #8da6ff;
+}
+
+.dropdown-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(40, 190, 120, 0.1);
+  color: #4ade80;
+  font-size: 0.68rem;
+}
+
+.dropdown-divider {
+  height: 1px;
+  margin: 0.3rem 0;
+  background: rgba(146, 169, 214, 0.15);
+}
+
+.dropdown-title--sub {
+  margin-top: 0.2rem;
+}
+
+.dropdown-hint {
+  margin: 0 0 0.3rem;
+  font-size: 0.65rem;
+  color: rgba(237, 243, 255, 0.4);
+  line-height: 1.4;
+}
+
+.vault-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.vault-key-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(7, 17, 28, 0.6);
+}
+
+.vault-key-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.vault-key-provider {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(237, 243, 255, 0.7);
+}
+
+.vault-key-ref {
+  font-size: 0.6rem;
+  font-family: monospace;
+  color: rgba(237, 243, 255, 0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-key-time {
+  font-size: 0.58rem;
+  color: rgba(237, 243, 255, 0.3);
+}
+
+.vault-key-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.vault-key-remove:hover {
+  background: rgba(240, 80, 80, 0.15);
+  color: #f87171;
 }
 
 .dropdown-save-btn {
