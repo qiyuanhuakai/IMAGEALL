@@ -109,6 +109,14 @@ export async function storeArtifact(artifact: Artifact): Promise<void> {
     if (artifact.uri.startsWith('data:')) {
       const base64 = artifact.uri.split(',')[1] ?? ''
       imageBuffer = Buffer.from(base64, 'base64')
+    } else if (/^https?:\/\//.test(artifact.uri)) {
+      try {
+        const response = await fetch(artifact.uri)
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer()
+          imageBuffer = Buffer.from(arrayBuffer)
+        }
+      } catch {}
     }
 
     try {
