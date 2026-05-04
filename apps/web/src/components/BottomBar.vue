@@ -36,6 +36,7 @@ const props = defineProps<{
   availableSizePresets: Array<{ width: number; height: number }>
   supportedAspectRatios: string[]
   supportsCustomSize: boolean
+  supportsMultiImage: boolean
   numImages: number
   maxImages: number
   providerOptions: Record<string, string | number | boolean>
@@ -220,14 +221,19 @@ function onSizeSelect(event: Event) {
 
           <label class="bb-param">
             <span>{{ $t('inspector.seed') }}</span>
-            <input
-              :value="props.seed"
-              type="number"
-              @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))"
-            />
+            <div class="seed-input-row">
+              <input
+                :value="props.seed"
+                type="number"
+                @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))"
+              />
+              <button class="seed-dice-btn" type="button" :title="$t('inspector.randomSeed')" @click="emit('update:seed', Math.floor(Math.random() * 2147483647))">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="16" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="16" r="1.5" fill="currentColor"/><circle cx="16" cy="16" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+              </button>
+            </div>
           </label>
 
-          <label class="bb-param">
+          <label v-if="props.supportsMultiImage" class="bb-param">
             <span>{{ $t('inspector.numImages') }}</span>
             <input
               :value="props.numImages"
@@ -250,7 +256,7 @@ function onSizeSelect(event: Event) {
         </label>
 
         <!-- Source image + Upload row -->
-        <div class="bb-extra-row">
+        <div v-if="props.selectedOperation === 'edit' || props.selectedOperation === 'upscale'" class="bb-extra-row">
           <div class="bb-param">
             <span>{{ $t('inspector.sourceImage') }}</span>
             <div class="source-chip">
@@ -294,7 +300,7 @@ function onSizeSelect(event: Event) {
               @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
             >
               <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
-                {{ selectOption.label }}
+                {{ t(`providerOptions.${option.id}${selectOption.value}`, selectOption.label) }}
               </option>
             </select>
 

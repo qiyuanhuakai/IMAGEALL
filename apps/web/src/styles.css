@@ -391,15 +391,11 @@ button {
 }
 
 .bb-params-grid--main {
-  grid-template-columns: 1.5fr 0.75fr 0.75fr 0.75fr;
+  grid-template-columns: 1.2fr 0.6fr 0.6fr 0.8fr 0.8fr;
 }
 
 .bb-params-grid--provider {
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-}
-
-.bb-params-grid--provider {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
 .bb-param {
@@ -1110,4 +1106,39 @@ button {
   .bb-extra-row .bb-param {
     min-width: 0;
   }
+}
+
+/* ─── Seed Input Row ─────────────────────────────────────────── */
+
+.seed-input-row {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.seed-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.seed-dice-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(146, 169, 214, 0.2);
+  border-radius: 8px;
+  background: rgba(7, 17, 28, 0.66);
+  color: rgba(237, 243, 255, 0.5);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.seed-dice-btn:hover {
+  background: rgba(100, 140, 255, 0.15);
+  border-color: rgba(100, 140, 255, 0.3);
+  color: #b8c8f8;
 }

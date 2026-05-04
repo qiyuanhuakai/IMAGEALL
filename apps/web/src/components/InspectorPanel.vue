@@ -16,6 +16,9 @@ const props = defineProps<{
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
   supportsCustomSize: boolean
+  supportsMultiImage: boolean
+  numImages: number
+  maxImages: number
   providerOptions: Record<string, string | number | boolean>
   providerOptionDefinitions: ProviderOptionDefinition[]
   apiKey: string
@@ -34,10 +37,11 @@ const emit = defineEmits([
   'update:width',
   'update:height',
   'update:seed',
+  'update:numImages',
   'apply:sizePreset',
   'update:providerOption',
-  'update:apiKey',
   'update:sourceImageFile',
+  'update:apiKey',
   'run',
 ])
 
@@ -139,7 +143,7 @@ const availableOperations = computed(() => {
             {{ preset.width }} × {{ preset.height }}
           </option>
         </select>
-        <small v-if="aspectRatio">{{ $t('inspector.aspectRatio') }}: {{ aspectRatio }}</small>
+        <small v-if="width && height">{{ width }} × {{ height }}{{ aspectRatio ? ` (${aspectRatio})` : '' }}</small>
       </label>
 
       <div v-if="supportsCustomSize" class="field-grid">
@@ -153,30 +157,44 @@ const availableOperations = computed(() => {
         </label>
       </div>
 
-      <label class="field field--full">
-        <span>{{ $t('inspector.seed') }}</span>
-        <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
-      </label>
+      <div class="field-grid">
+        <label class="field">
+          <span>{{ $t('inspector.seed') }}</span>
+          <div class="seed-input-row">
+            <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
+            <button class="seed-dice-btn" type="button" :title="$t('inspector.randomSeed')" @click="emit('update:seed', Math.floor(Math.random() * 2147483647))">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="16" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="16" r="1.5" fill="currentColor"/><circle cx="16" cy="16" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+            </button>
+          </div>
+        </label>
 
-      <div class="source-chip">
-        <span>{{ $t('inspector.sourceImage') }}</span>
-        <strong>{{ sourceImageTitle ?? '—' }}</strong>
+        <label v-if="supportsMultiImage" class="field">
+          <span>{{ $t('inspector.numImages') }}</span>
+          <input :value="numImages" type="number" min="1" :max="maxImages" @input="emit('update:numImages', Number(($event.target as HTMLInputElement).value))" />
+        </label>
       </div>
 
-      <label v-if="selectedOperation === 'edit'" class="field">
-        <span>{{ $t('inspector.uploadSource') }}</span>
-        <input
-          accept="image/png,image/jpeg,image/webp"
-          type="file"
-          @change="
-            ($event) => {
-              const file = ($event.target as HTMLInputElement).files?.[0]
-              if (file) emit('update:sourceImageFile', file)
-            }
-          "
-        />
-        <small>{{ sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
-      </label>
+      <template v-if="selectedOperation === 'edit' || selectedOperation === 'upscale'">
+        <div class="source-chip">
+          <span>{{ $t('inspector.sourceImage') }}</span>
+          <strong>{{ sourceImageTitle ?? '—' }}</strong>
+        </div>
+
+        <label v-if="selectedOperation === 'edit'" class="field">
+          <span>{{ $t('inspector.uploadSource') }}</span>
+          <input
+            accept="image/png,image/jpeg,image/webp"
+            type="file"
+            @change="
+              ($event) => {
+                const file = ($event.target as HTMLInputElement).files?.[0]
+                if (file) emit('update:sourceImageFile', file)
+              }
+            "
+          />
+          <small>{{ sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
+        </label>
+      </template>
     </section>
 
     <section class="inspector-section">
@@ -193,7 +211,7 @@ const availableOperations = computed(() => {
           @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
         >
           <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
-            {{ selectOption.label }}
+            {{ t(`providerOptions.${option.id}${selectOption.value}`, selectOption.label) }}
           </option>
         </select>
 

@@ -84,6 +84,8 @@ function stopResize() {
       <div class="right-panel">
         <PreviewStage
           :selected-artifact="workbench.selectedArtifact.value"
+          :fallback-width="workbench.width.value"
+          :fallback-height="workbench.height.value"
         />
 
         <BottomBar
@@ -110,6 +112,7 @@ function stopResize() {
           :supported-aspect-ratios="workbench.supportedAspectRatios.value"
           :supports-custom-size="workbench.supportsCustomSize.value ?? false"
           :supports-negative-prompt="workbench.supportsNegativePrompt.value !== false"
+          :supports-multi-image="workbench.supportsMultiImage.value !== false"
           :num-images="workbench.numImages.value"
           :max-images="workbench.maxImages.value"
           :provider-options="workbench.providerOptions.value"

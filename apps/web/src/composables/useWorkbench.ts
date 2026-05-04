@@ -92,11 +92,7 @@ export function useWorkbench() {
     const id = `sysmsg-${messageIdCounter}-${Date.now()}`
     const msg: SystemMessage = { id, level, text, timestamp: new Date().toISOString() }
     if (source !== undefined) msg.source = source
-    systemMessages.value = [msg, ...systemMessages.value]
-    // Keep only latest 50 messages
-    if (systemMessages.value.length > 50) {
-      systemMessages.value = systemMessages.value.slice(0, 50)
-    }
+    systemMessages.value = [msg]
   }
 
   function clearSystemMessages() {
@@ -144,6 +140,11 @@ export function useWorkbench() {
     const provider = activeProvider.value
     if (!provider) return true
     return provider.capabilities.supportsNegativePrompt !== false
+  })
+  const supportsMultiImage = computed(() => {
+    const provider = activeProvider.value
+    if (!provider) return true
+    return provider.capabilities.supportsMultiImage !== false
   })
   const maxImages = computed(() => activeModel.value?.constraints?.maxImages ?? 9)
   const selectedSourceImageInput = computed<ImageInputSource[] | undefined>(() => {
@@ -442,6 +443,7 @@ export function useWorkbench() {
     supportedAspectRatios,
     supportsCustomSize,
     supportsNegativePrompt,
+    supportsMultiImage,
     maxImages,
     selectedWorkspaceId,
     selectedArtifactId,
