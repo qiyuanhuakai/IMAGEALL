@@ -16,6 +16,7 @@ import {
 
 import { createExecutionPlan, takeExecutionPlan } from './plans'
 import { listArtifacts, listRuns, storeArtifact, storeRun, setWorkspaceFolder, getWorkspaceFolder, getWorkspaceStatus, restoreWorkspace } from './store'
+import { storeApiKey, resolveApiKey, removeApiKey, listKeys } from './keyVault'
 
 const port = Number(Bun.env.IMAGEALL_PORT ?? 3001)
 let bootstrap = createDemoBootstrap()
@@ -138,6 +139,28 @@ const app = new Elysia({ prefix: '/api' })
       return { ok: false, message: `Failed to restore workspace: ${error instanceof Error ? error.message : 'Unknown error'}` }
     }
   })
+  .post('/keys/register', async ({ body, set }) => {
+    const { providerId, apiKey } = body as { providerId?: string; apiKey?: string }
+
+    if (!providerId || !apiKey) {
+      set.status = 400
+      return { ok: false, message: 'providerId and apiKey are required' }
+    }
+
+    const ref = storeApiKey(providerId, apiKey.trim())
+    return { ok: true, ...ref }
+  })
+  .delete('/keys/:keyRef', ({ params, set }) => {
+    const removed = removeApiKey(params.keyRef)
+    if (!removed) {
+      set.status = 404
+      return { ok: false, message: 'Key not found' }
+    }
+    return { ok: true }
+  })
+  .get('/keys', () => {
+    return { ok: true, keys: listKeys() }
+  })
   .get('/bootstrap', () => bootstrap)
   .get('/providers', () => bootstrap.providers)
   .get('/providers/:providerId/models', ({ params, set }) => {
@@ -250,7 +273,21 @@ const app = new Elysia({ prefix: '/api' })
 
       const provider = providerRegistry.getProviderById(input.providerId)
       const envKey = provider?.auth.envKey
-      const apiKey = input.auth?.apiKey ?? payload.auth?.apiKey ?? (envKey ? Bun.env[envKey] : undefined)
+
+      let apiKey: string | undefined
+
+      if (input.auth?.keyRef) {
+        apiKey = resolveApiKey(input.auth.keyRef)
+      }
+      if (!apiKey && payload.auth?.keyRef) {
+        apiKey = resolveApiKey(payload.auth.keyRef)
+      }
+      if (!apiKey) {
+        apiKey = input.auth?.apiKey ?? payload.auth?.apiKey
+      }
+      if (!apiKey && envKey) {
+        apiKey = Bun.env[envKey]
+      }
 
       if (!apiKey) {
         set.status = 400
@@ -417,7 +454,18 @@ const app = new Elysia({ prefix: '/api' })
 
     const provider = providerRegistry.getProviderById(input.providerId)
     const envKey = provider?.auth.envKey
-    const apiKey = input.auth.apiKey ?? (envKey ? Bun.env[envKey] : undefined)
+
+    let apiKey: string | undefined
+
+    if (input.auth?.keyRef) {
+      apiKey = resolveApiKey(input.auth.keyRef)
+    }
+    if (!apiKey) {
+      apiKey = input.auth.apiKey
+    }
+    if (!apiKey && envKey) {
+      apiKey = Bun.env[envKey]
+    }
 
     if (!apiKey) {
       set.status = 400

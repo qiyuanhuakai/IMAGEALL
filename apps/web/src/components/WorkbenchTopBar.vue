@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import type { LocaleCode, LocaleOption, ProviderManifest, Workspace } from '@imageall/core'
+import { saveProviderKeys, loadProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
+import { registerKey, removeKey, listVaultKeys, type KeyListItem } from '../lib/keyVaultClient'
 
 const props = defineProps<{
   locales: LocaleOption[]
@@ -29,6 +31,10 @@ const fsPath = ref('')
 const fsDirs = ref<Array<{ name: string; path: string }>>([])
 const fsLoading = ref(false)
 const fsError = ref('')
+
+const vaultKeys = ref<KeyListItem[]>([])
+const vaultLoading = ref(false)
+const storageEncrypted = ref(isSecureStorageAvailable())
 
 function isLocaleCode(value: string): value is LocaleCode {
   return value === 'en' || value === 'zh-CN'
@@ -75,11 +81,11 @@ interface ProviderKeyEntry {
 
 const providerKeys = ref<ProviderKeyEntry[]>([])
 
-function loadProviderKeys() {
+async function loadProviderKeysFromStorage() {
   const saved: Record<string, string> = {}
   try {
-    const raw = localStorage.getItem('imageall_provider_keys')
-    if (raw) Object.assign(saved, JSON.parse(raw))
+    const keys = await loadProviderKeys()
+    Object.assign(saved, keys)
   } catch { /* ignore */ }
 
   providerKeys.value = (props.providers ?? []).map((p) => ({
@@ -90,20 +96,26 @@ function loadProviderKeys() {
   }))
 }
 
-function saveProviderKeys() {
+async function saveProviderKeysToStorage() {
   const map: Record<string, string> = {}
   for (const entry of providerKeys.value) {
     if (entry.value.trim()) {
       map[entry.providerId] = entry.value.trim()
     }
   }
-  localStorage.setItem('imageall_provider_keys', JSON.stringify(map))
+
+  try {
+    await saveProviderKeys(map)
+  } catch (err) {
+    console.warn('[TopBar] Failed to save encrypted keys:', err)
+  }
+
   emit('update:providerKeys', map)
   showProviders.value = false
 }
 
 function openProviders() {
-  loadProviderKeys()
+  loadProviderKeysFromStorage()
   showProviders.value = true
   showSettings.value = false
 }
@@ -152,6 +164,32 @@ function selectFolder() {
   emit('select:workspaceFolder', fsPath.value)
   showFolderPicker.value = false
   closeAll()
+}
+
+async function registerToVault(providerId: string, apiKey: string) {
+  vaultLoading.value = true
+  try {
+    const result = await registerKey(providerId, apiKey)
+    if (result.ok) {
+      vaultKeys.value = await listVaultKeys()
+    }
+  } catch (err) {
+    console.warn('[TopBar] Failed to register key to vault:', err)
+  } finally {
+    vaultLoading.value = false
+  }
+}
+
+async function removeFromVault(keyRef: string) {
+  vaultLoading.value = true
+  try {
+    await removeKey(keyRef)
+    vaultKeys.value = await listVaultKeys()
+  } catch (err) {
+    console.warn('[TopBar] Failed to remove vault key:', err)
+  } finally {
+    vaultLoading.value = false
+  }
 }
 </script>
 
@@ -241,6 +279,13 @@ function selectFolder() {
 
       <div v-if="showProviders" class="topbar-dropdown topbar-dropdown--wide" @click.stop>
         <p class="dropdown-title">{{ $t('topbar.providers') }}</p>
+        <div v-if="storageEncrypted" class="dropdown-notice">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          {{ $t('topbar.encryptedStorage') }}
+        </div>
         <label v-for="entry in providerKeys" :key="entry.providerId" class="dropdown-field">
           <span>{{ entry.label }}</span>
           <input
@@ -250,7 +295,7 @@ function selectFolder() {
             class="dropdown-input"
           />
         </label>
-        <button class="dropdown-save-btn" type="button" @click="saveProviderKeys">{{ $t('app.save') }}</button>
+        <button class="dropdown-save-btn" type="button" @click="saveProviderKeysToStorage">{{ $t('app.save') }}</button>
       </div>
     </div>
   </header>

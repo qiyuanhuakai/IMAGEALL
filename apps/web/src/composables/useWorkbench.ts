@@ -16,6 +16,7 @@ import {
 } from '@imageall/core'
 
 import { checkWorkspaceStatus, executePreparedRun, fetchBootstrap, prepareRun, restoreWorkspace } from '../lib/api'
+import { loadProviderKeys, saveProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b)
@@ -58,10 +59,12 @@ export function useWorkbench() {
   const providerOptions = ref<Record<string, ProviderOptionValue>>({})
   const apiKey = ref('')
   const providerKeys = ref<Record<string, string>>({})
-  try {
-    const raw = localStorage.getItem('imageall_provider_keys')
-    if (raw) providerKeys.value = JSON.parse(raw)
-  } catch { /* ignore */ }
+  const secureStorageAvailable = isSecureStorageAvailable()
+
+  loadProviderKeys()
+    .then((keys) => { providerKeys.value = keys })
+    .catch(() => { /* graceful degradation: empty keys */ })
+
   const sourceImageDataUrl = ref('')
   const sourceImageFilename = ref('source.png')
   const latestPlan = ref<PreparedRunPlan>()
@@ -429,8 +432,15 @@ export function useWorkbench() {
     liveOutputArtifacts,
     runPreparedExecution,
     updateSourceImage,
-    updateProviderKeys: (keys: Record<string, string>) => {
+    updateProviderKeys: async (keys: Record<string, string>) => {
       providerKeys.value = keys
+      if (secureStorageAvailable) {
+        try {
+          await saveProviderKeys(keys)
+        } catch (err) {
+          console.warn('[useWorkbench] Failed to save encrypted keys:', err)
+        }
+      }
     },
     setWorkspaceFolder: async (path: string) => {
       localStorage.setItem('imageall_workspace_folder', path)

@@ -217,7 +217,10 @@ export interface UnifiedRunInput {
   providerId: string
   modelId: string
   auth: {
+    /** Plaintext API key (legacy, still supported) */
     apiKey?: string
+    /** Reference to server-side stored key (preferred) */
+    keyRef?: string
   }
   imageInputs?: ImageInputSource[]
   providerOptions?: Record<string, unknown>
@@ -248,8 +251,19 @@ export interface PreparedRunPlan {
 export interface ExecutePreparedRunInput {
   planId: string
   auth?: {
+    /** Plaintext API key (legacy, still supported) */
     apiKey?: string
+    /** Reference to server-side stored key (preferred) */
+    keyRef?: string
   }
+}
+
+export interface KeyReference {
+  keyRef: string
+  providerId: string
+  label?: string
+  createdAt: string
+  lastUsedAt?: string
 }
 
 export interface NormalizedProviderError {
