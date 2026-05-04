@@ -12,8 +12,8 @@ const props = defineProps<{
 }>()
 
 function displaySize(artifact: Artifact): string {
-  const w = artifact.width || props.fallbackWidth
-  const h = artifact.height || props.fallbackHeight
+  const w = artifact.width > 0 ? artifact.width : props.fallbackWidth
+  const h = artifact.height > 0 ? artifact.height : props.fallbackHeight
   if (w && h) return `${w}×${h}`
   return t('stage.unknownSize')
 }

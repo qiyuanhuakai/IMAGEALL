@@ -36,30 +36,10 @@ const SENSENOVA_SIZE_PRESETS: Array<{ width: number; height: number }> = [
   { width: 1344, height: 3136 },
 ]
 
-const SENSENOVA_SUPPORTED_ASPECT_RATIOS = [
-  '2:3',
-  '3:2',
-  '3:4',
-  '4:3',
-  '4:5',
-  '5:4',
-  '1:1',
-  '16:9',
-  '9:16',
-  '21:9',
-  '9:21',
-]
-
 function findSizePreset(size: { width: number; height: number }): { width: number; height: number } | undefined {
   return SENSENOVA_SIZE_PRESETS.find(
     (preset) => preset.width === size.width && preset.height === size.height,
   )
-}
-
-function sizeToAspectRatio(size: { width: number; height: number }): string {
-  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
-  const divisor = gcd(size.width, size.height)
-  return `${size.width / divisor}:${size.height / divisor}`
 }
 
 export class SenseNovaAdaptor implements ImageProviderAdaptor {
@@ -104,17 +84,8 @@ export class SenseNovaAdaptor implements ImageProviderAdaptor {
       const preset = findSizePreset(input.operation.size)
       if (!preset) {
         errors.push(
-          'SenseNova U1 Fast only supports predefined 2K size presets. ' +
-            'Use aspectRatio instead of custom size.',
-        )
-      }
-    }
-
-    if (input.operation.aspectRatio) {
-      if (!SENSENOVA_SUPPORTED_ASPECT_RATIOS.includes(input.operation.aspectRatio)) {
-        errors.push(
-          `Unsupported SenseNova aspect ratio: ${input.operation.aspectRatio}. ` +
-            `Supported: ${SENSENOVA_SUPPORTED_ASPECT_RATIOS.join(', ')}`,
+          'SenseNova U1 Fast only supports predefined 2K size presets: ' +
+            SENSENOVA_SIZE_PRESETS.map((p) => `${p.width}x${p.height}`).join(', '),
         )
       }
     }
@@ -145,11 +116,6 @@ export class SenseNovaAdaptor implements ImageProviderAdaptor {
 
     if (input.operation.size) {
       const preset = findSizePreset(input.operation.size)
-      if (preset) {
-        body.size = `${preset.width}x${preset.height}`
-      }
-    } else if (input.operation.aspectRatio) {
-      const preset = SENSENOVA_SIZE_PRESETS.find((p) => sizeToAspectRatio(p) === input.operation.aspectRatio)
       if (preset) {
         body.size = `${preset.width}x${preset.height}`
       }

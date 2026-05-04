@@ -126,10 +126,11 @@ export const providerManifests: ProviderManifest[] = [
       header: 'Authorization',
       envKey: 'STEPFUN_API_KEY',
     },
-    operations: ['generate', 'edit'],
+    operations: ['generate', 'edit', 'image2image'],
     capabilities: {
       supportsGenerate: true,
       supportsEdit: true,
+      supportsImage2image: true,
       supportsMultiImage: false,
       supportsNegativePrompt: true,
       supportsCustomSize: true,
@@ -154,6 +155,7 @@ export const providerManifests: ProviderManifest[] = [
         control: 'text',
         defaultValue: '',
         appliesToModels: ['step-1x-medium'],
+        appliesToOperations: ['generate'],
       },
       {
         id: 'styleReferenceWeight',
@@ -165,6 +167,7 @@ export const providerManifests: ProviderManifest[] = [
         max: 2,
         step: 0.05,
         appliesToModels: ['step-1x-medium'],
+        appliesToOperations: ['generate'],
       },
       {
         id: 'sourceWeight',
@@ -176,6 +179,7 @@ export const providerManifests: ProviderManifest[] = [
         max: 1,
         step: 0.05,
         appliesToModels: ['step-1x-medium'],
+        appliesToOperations: ['image2image'],
       },
       {
         id: 'steps',
@@ -279,7 +283,7 @@ export const providerManifests: ProviderManifest[] = [
       {
         id: 'step-1x-medium',
         label: 'step-1x-medium',
-        operations: ['generate', 'edit'],
+        operations: ['generate', 'image2image'],
         constraints: {
           maxImages: 1,
           promptMaxLength: 1024,
@@ -419,7 +423,7 @@ export const providerManifests: ProviderManifest[] = [
       supportsMultiImage: false,
       supportsNegativePrompt: false,
       supportsCustomSize: false,
-      supportsAspectRatio: true,
+      supportsAspectRatio: false,
       supportsSeed: false,
       supportsBase64Output: false,
     },
@@ -433,19 +437,6 @@ export const providerManifests: ProviderManifest[] = [
         constraints: {
           maxImages: 1,
           promptMaxLength: 4096,
-          supportedAspectRatios: [
-            '2:3',
-            '3:2',
-            '3:4',
-            '4:3',
-            '4:5',
-            '5:4',
-            '1:1',
-            '16:9',
-            '9:16',
-            '21:9',
-            '9:21',
-          ],
           sizePresets: [
             { width: 1664, height: 2496 },
             { width: 2496, height: 1664 },

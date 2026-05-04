@@ -105,8 +105,9 @@ function stopResize() {
           :width="workbench.width.value"
           :height="workbench.height.value"
           :seed="workbench.seed.value"
-          :source-image-title="workbench.selectedArtifact.value?.title"
+          :source-image-title="workbench.sourceImageFilename.value ?? workbench.selectedArtifact.value?.title"
           :source-image-filename="workbench.sourceImageFilename.value"
+          :style-reference-image-filename="workbench.styleReferenceImageFilename.value"
           :active-model="workbench.activeModel.value"
           :available-size-presets="workbench.availableSizePresets.value"
           :supported-aspect-ratios="workbench.supportedAspectRatios.value"
@@ -136,6 +137,7 @@ function stopResize() {
           @update:num-images="workbench.numImages.value = $event"
           @apply:size-preset="({ width, height }) => { workbench.width.value = width; workbench.height.value = height }"
           @update:source-image-file="workbench.updateSourceImage($event)"
+          @update:style-reference-image-file="workbench.updateStyleReferenceImage($event)"
           @update:provider-option="workbench.providerOptions.value[$event.id] = $event.value"
           @run="workbench.runPreparedExecution()"
         />

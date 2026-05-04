@@ -352,14 +352,34 @@ const app = new Elysia({ prefix: '/api' })
                 meta.negativePrompt = input.operation.negativePrompt
               }
 
+              const providerLabel = provider?.label ?? input.providerId
+              const shortRunId = runId.replace('run-', '').slice(0, 6)
+              const timeLabel = new Date().toISOString().slice(11, 16)
+              const uniqueTitle = `${providerLabel} ${input.operation.kind} #${index + 1} — ${shortRunId} ${timeLabel}`
+
+              const aspectRatioSizeMap: Record<string, { width: number; height: number }> = {
+                '1:1': { width: 1024, height: 1024 },
+                '16:9': { width: 1280, height: 720 },
+                '4:3': { width: 1152, height: 864 },
+                '3:2': { width: 1248, height: 832 },
+                '2:3': { width: 832, height: 1248 },
+                '3:4': { width: 864, height: 1152 },
+                '9:16': { width: 720, height: 1280 },
+                '21:9': { width: 1344, height: 576 },
+              }
+              const resolvedSize = input.operation.size
+                ?? (input.operation.aspectRatio ? aspectRatioSizeMap[input.operation.aspectRatio] : undefined)
+              const outputWidth = output.width ?? resolvedSize?.width ?? 0
+              const outputHeight = output.height ?? resolvedSize?.height ?? 0
+
               await storeArtifact({
               id: artifactId,
               workspaceId: 'workspace-demo',
               kind: input.operation.kind === 'edit' ? 'edited' : 'generated',
-              title: `${input.providerId} ${input.operation.kind} ${index + 1}`,
+              title: uniqueTitle,
               mimeType,
-              width: output.width ?? 0,
-              height: output.height ?? 0,
+              width: outputWidth,
+              height: outputHeight,
               uri,
               createdAt: new Date().toISOString(),
               sourceRunId: runId,

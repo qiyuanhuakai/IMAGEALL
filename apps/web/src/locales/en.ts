@@ -76,6 +76,8 @@ export default {
     apiKeyNote: 'Configure API keys via the lock icon in the top bar.',
     uploadSource: 'Upload source',
     uploadHint: 'PNG, JPEG, or WEBP.',
+    referenceImage: 'Reference image',
+    uploadReference: 'Upload reference',
     run: 'Run',
     running: 'Running…',
     planReady: 'Execution plan ready',
@@ -88,8 +90,8 @@ export default {
     styleReferenceSourceDesc: 'Public URL or data URL used as the style reference source.',
     styleReferenceWeight: 'Style reference weight',
     styleReferenceWeightDesc: 'Weight for style reference on style-conditioned runs.',
-    sourceWeight: 'Source weight',
-    sourceWeightDesc: 'Controls how strongly image2image should stay close to the source.',
+    sourceWeight: 'Reference weight',
+    sourceWeightDesc: 'Controls how strongly image2image should stay close to the reference image.',
     steps: 'Steps',
     stepsDesc: 'Number of denoising steps. Higher values improve quality but increase latency.',
     cfgScale: 'CFG scale',
@@ -117,6 +119,7 @@ export default {
   operations: {
     generate: 'Generate',
     edit: 'Edit',
+    image2image: 'Image to Image',
     upscale: 'Upscale',
   },
   artifactKind: {

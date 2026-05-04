@@ -76,6 +76,8 @@ export default {
     apiKeyNote: '通过顶部锁形图标配置 API Key。',
     uploadSource: '上传源图',
     uploadHint: '支持 PNG、JPEG、WEBP。',
+    referenceImage: '参考图',
+    uploadReference: '上传参考图',
     run: '执行',
     running: '执行中…',
     planReady: '执行计划已生成',
@@ -88,8 +90,8 @@ export default {
     styleReferenceSourceDesc: '用作风格参考的图片 URL 或 data URL。',
     styleReferenceWeight: '风格参考权重',
     styleReferenceWeightDesc: '风格参考图在生成时的权重，数值越大越接近参考图风格。',
-    sourceWeight: '源图权重',
-    sourceWeightDesc: '控制图生图结果与源图的相似程度，越小越接近源图。',
+    sourceWeight: '参考图权重',
+    sourceWeightDesc: '控制图生图时与参考图的相似程度，越小越接近参考图。',
     steps: '生成步数',
     stepsDesc: '降噪步数，越大质量越高但耗时越长。',
     cfgScale: 'CFG 强度',
@@ -117,6 +119,7 @@ export default {
   operations: {
     generate: '生成',
     edit: '编辑',
+    image2image: '图生图',
     upscale: '放大',
   },
   artifactKind: {

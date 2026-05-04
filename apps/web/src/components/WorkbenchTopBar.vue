@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { LocaleCode, LocaleOption, ProviderManifest, Workspace } from '@imageall/core'
 import { saveProviderKeys, loadProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
 import { registerKey, removeKey, listVaultKeys, type KeyListItem } from '../lib/keyVaultClient'
+import CustomSelect from './CustomSelect.vue'
 
 export interface SystemMessage {
   id: string
@@ -57,6 +58,12 @@ function isLocaleCode(value: string): value is LocaleCode {
 
 function handleLocaleChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
+  if (isLocaleCode(value)) {
+    emit('update:selectedLocale', value)
+  }
+}
+
+function onLocaleChange(value: string) {
   if (isLocaleCode(value)) {
     emit('update:selectedLocale', value)
   }
@@ -268,14 +275,11 @@ async function removeFromVault(keyRef: string) {
       <div v-if="showSettings" class="topbar-dropdown" @click.stop>
         <label class="dropdown-field">
           <span>{{ $t('topbar.locale') }}</span>
-          <select
-            :value="selectedLocale"
-            @change="handleLocaleChange"
-          >
-            <option v-for="locale in locales" :key="locale.code" :value="locale.code">
-              {{ locale.label }}
-            </option>
-          </select>
+          <CustomSelect
+            :model-value="selectedLocale"
+            :options="locales.map(l => ({ value: l.code, label: l.label }))"
+            @update:model-value="onLocaleChange"
+          />
         </label>
 
         <button class="dropdown-folder-btn" type="button" @click="openFolderPicker">
@@ -458,15 +462,48 @@ async function removeFromVault(keyRef: string) {
   letter-spacing: 0.05em;
 }
 
-.dropdown-field select,
 .dropdown-input {
-  padding: 0.3rem 0.5rem;
-  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
   font-size: 0.78rem;
-  border: 1px solid rgba(146, 169, 214, 0.2);
-  background: rgba(7, 17, 28, 0.8);
+  border: 1px solid rgba(146, 169, 214, 0.18);
+  background-color: rgba(12, 20, 36, 0.72);
   color: #edf3ff;
   width: 100%;
+}
+
+.dropdown-field select:hover {
+  border-color: rgba(146, 169, 214, 0.32);
+  background-color: rgba(16, 26, 44, 0.78);
+}
+
+.dropdown-field select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--provider-accent) 50%, rgba(146, 169, 214, 0.3));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--provider-accent) 12%, transparent);
+  background-color: rgba(16, 26, 44, 0.82);
+}
+
+.dropdown-field select option,
+.dropdown-field select optgroup {
+  background-color: #0d1624;
+  color: #edf3ff;
+}
+
+.dropdown-field select option:checked,
+.dropdown-field select option[selected] {
+  background-color: color-mix(in srgb, var(--provider-accent) 25%, #0d1624);
+  color: #edf3ff;
+}
+
+.dropdown-field select option:hover {
+  background-color: color-mix(in srgb, var(--provider-accent) 40%, #0d1624);
+  color: #edf3ff;
+}
+
+.dropdown-input {
+  padding: 0.35rem 0.55rem;
+  background-image: none;
 }
 
 .dropdown-field-row {

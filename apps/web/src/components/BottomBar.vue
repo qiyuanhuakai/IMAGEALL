@@ -11,6 +11,7 @@ import type {
   Workspace,
 } from '@imageall/core'
 import { useI18n } from 'vue-i18n'
+import CustomSelect from './CustomSelect.vue'
 
 const props = defineProps<{
   locales: LocaleOption[]
@@ -32,6 +33,7 @@ const props = defineProps<{
   seed: number
   sourceImageTitle: string | undefined
   sourceImageFilename: string | undefined
+  styleReferenceImageFilename: string | undefined
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
   supportedAspectRatios: string[]
@@ -63,13 +65,14 @@ const emit = defineEmits([
   'apply:sizePreset',
   'update:providerOption',
   'update:sourceImageFile',
+  'update:styleReferenceImageFile',
   'update:numImages',
   'run',
 ])
 
 const { t } = useI18n()
 
-const allOperations: OperationKind[] = ['generate', 'edit', 'upscale']
+const allOperations: OperationKind[] = ['generate', 'edit', 'image2image', 'upscale']
 
 const availableOperations = computed(() => {
   const supported = props.activeModel?.operations ?? allOperations
@@ -93,6 +96,12 @@ function onSizeSelect(event: Event) {
   emit('update:width', w)
   emit('update:height', h)
 }
+
+function onSizeSelectString(value: string) {
+  const [w, h] = value.split('x').map(Number)
+  emit('update:width', w)
+  emit('update:height', h)
+}
 </script>
 
 <template>
@@ -102,26 +111,22 @@ function onSizeSelect(event: Event) {
       <div class="bb-selectors">
         <label class="bb-select">
           <span>{{ $t('topbar.provider') }}</span>
-          <select
-            :value="props.selectedProviderId"
-            @change="emit('update:selectedProviderId', ($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="provider in props.providers" :key="provider.id" :value="provider.id">
-              {{ provider.label }}
-            </option>
-          </select>
+          <CustomSelect
+            :model-value="props.selectedProviderId"
+            :options="props.providers.map(p => ({ value: p.id, label: p.label }))"
+            placement="top"
+            @update:model-value="emit('update:selectedProviderId', $event)"
+          />
         </label>
 
         <label class="bb-select">
           <span>{{ $t('topbar.model') }}</span>
-          <select
-            :value="props.selectedModelId"
-            @change="emit('update:selectedModelId', ($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="model in props.models" :key="model.id" :value="model.id">
-              {{ model.label }}
-            </option>
-          </select>
+          <CustomSelect
+            :model-value="props.selectedModelId"
+            :options="props.models.map(m => ({ value: m.id, label: m.label }))"
+            placement="top"
+            @update:model-value="emit('update:selectedModelId', $event)"
+          />
         </label>
       </div>
 
@@ -171,32 +176,20 @@ function onSizeSelect(event: Event) {
         <div class="bb-params-grid bb-params-grid--main">
           <label class="bb-param">
             <span>{{ $t('inspector.size') }}</span>
-            <select
+            <CustomSelect
               v-if="props.supportedAspectRatios.length > 0"
-              :value="props.aspectRatio"
-              @change="emit('update:aspectRatio', ($event.target as HTMLSelectElement).value)"
-            >
-              <option
-                v-for="ratio in props.supportedAspectRatios"
-                :key="ratio"
-                :value="ratio"
-              >
-                {{ ratio }}
-              </option>
-            </select>
-            <select
+              :model-value="props.aspectRatio"
+              :options="props.supportedAspectRatios.map(r => ({ value: r, label: r }))"
+              placement="top"
+              @update:model-value="emit('update:aspectRatio', $event)"
+            />
+            <CustomSelect
               v-else
-              :value="`${props.width}x${props.height}`"
-              @change="onSizeSelect"
-            >
-              <option
-                v-for="preset in props.availableSizePresets"
-                :key="`${preset.width}x${preset.height}`"
-                :value="`${preset.width}x${preset.height}`"
-              >
-                {{ preset.width }} × {{ preset.height }}
-              </option>
-            </select>
+              :model-value="`${props.width}x${props.height}`"
+              :options="props.availableSizePresets.map(p => ({ value: `${p.width}x${p.height}`, label: `${p.width} × ${p.height}` }))"
+              placement="top"
+              @update:model-value="onSizeSelectString($event)"
+            />
             <small v-if="props.aspectRatio && props.supportedAspectRatios.length > 0">{{ props.aspectRatio }}</small>
           </label>
 
@@ -255,17 +248,17 @@ function onSizeSelect(event: Event) {
           />
         </label>
 
-        <!-- Source image + Upload row -->
-        <div v-if="props.selectedOperation === 'edit' || props.selectedOperation === 'upscale'" class="bb-extra-row">
+        <!-- Source/Reference image + Upload row -->
+        <div v-if="props.selectedOperation === 'edit' || props.selectedOperation === 'image2image' || props.selectedOperation === 'upscale'" class="bb-extra-row">
           <div class="bb-param">
-            <span>{{ $t('inspector.sourceImage') }}</span>
+            <span>{{ props.selectedOperation === 'image2image' ? $t('inspector.referenceImage') : $t('inspector.sourceImage') }}</span>
             <div class="source-chip">
               <strong>{{ props.sourceImageTitle ?? '—' }}</strong>
             </div>
           </div>
 
-          <label v-if="props.selectedOperation === 'edit'" class="bb-param">
-            <span>{{ $t('inspector.uploadSource') }}</span>
+          <label v-if="props.selectedOperation === 'edit' || props.selectedOperation === 'image2image'" class="bb-param">
+            <span>{{ props.selectedOperation === 'image2image' ? $t('inspector.uploadReference') : $t('inspector.uploadSource') }}</span>
             <input
               accept="image/png,image/jpeg,image/webp"
               type="file"
@@ -294,15 +287,13 @@ function onSizeSelect(event: Event) {
           <label v-for="option in props.providerOptionDefinitions" :key="option.id" class="bb-param">
             <span>{{ optionLabel(option.id) }}</span>
 
-            <select
+            <CustomSelect
               v-if="option.control === 'select'"
-              :value="props.providerOptions[option.id]"
-              @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
-            >
-              <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
-                {{ t(`providerOptions.${option.id}${selectOption.value}`, selectOption.label) }}
-              </option>
-            </select>
+              :model-value="String(props.providerOptions[option.id] ?? '')"
+              :options="(option.options ?? []).map(o => ({ value: o.value, label: t(`providerOptions.${option.id}${o.value}`, o.label) }))"
+              placement="top"
+              @update:model-value="emit('update:providerOption', { id: option.id, value: $event })"
+            />
 
             <input
               v-else-if="option.control === 'number'"
@@ -314,6 +305,19 @@ function onSizeSelect(event: Event) {
               @input="emit('update:providerOption', { id: option.id, value: Number(($event.target as HTMLInputElement).value) })"
             />
 
+            <template v-else-if="option.control === 'text' && option.id === 'styleReferenceSource'">
+              <input
+                accept="image/png,image/jpeg,image/webp"
+                type="file"
+                @change="
+                  ($event) => {
+                    const file = ($event.target as HTMLInputElement).files?.[0]
+                    if (file) emit('update:styleReferenceImageFile', file)
+                  }
+                "
+              />
+              <small>{{ props.styleReferenceImageFilename ?? $t('inspector.uploadHint') }}</small>
+            </template>
             <input
               v-else-if="option.control === 'text'"
               :value="String(props.providerOptions[option.id] ?? '')"

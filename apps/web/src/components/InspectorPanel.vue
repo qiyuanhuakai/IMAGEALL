@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { OperationKind, PreparedRunPlan, ProviderModelManifest, ProviderOptionDefinition } from '@imageall/core'
 import { useI18n } from 'vue-i18n'
+import CustomSelect from './CustomSelect.vue'
 
 const props = defineProps<{
   selectedOperation: OperationKind
@@ -13,6 +14,7 @@ const props = defineProps<{
   seed: number
   sourceImageTitle: string | undefined
   sourceImageFilename: string | undefined
+  styleReferenceImageFilename: string | undefined
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
   supportsCustomSize: boolean
@@ -41,6 +43,8 @@ const emit = defineEmits([
   'apply:sizePreset',
   'update:providerOption',
   'update:sourceImageFile',
+  'update:styleReferenceImageFile',
+  'update:numImages',
   'update:apiKey',
   'run',
 ])
@@ -62,7 +66,13 @@ function onSizeSelect(event: Event) {
   emit('update:height', h)
 }
 
-const allOperations: OperationKind[] = ['generate', 'edit', 'upscale']
+function onSizeSelectString(value: string) {
+  const [w, h] = value.split('x').map(Number)
+  emit('update:width', w)
+  emit('update:height', h)
+}
+
+const allOperations: OperationKind[] = ['generate', 'edit', 'image2image', 'upscale']
 
 const availableOperations = computed(() => {
   const supported = props.activeModel?.operations ?? allOperations
@@ -130,19 +140,11 @@ const availableOperations = computed(() => {
 
       <label class="field">
         <span>{{ $t('inspector.size') }}</span>
-        <select
-          :value="`${width}x${height}`"
-          @change="onSizeSelect"
-          class="bb-select"
-        >
-          <option
-            v-for="preset in availableSizePresets"
-            :key="`${preset.width}x${preset.height}`"
-            :value="`${preset.width}x${preset.height}`"
-          >
-            {{ preset.width }} × {{ preset.height }}
-          </option>
-        </select>
+        <CustomSelect
+          :model-value="`${width}x${height}`"
+          :options="availableSizePresets.map(p => ({ value: `${p.width}x${p.height}`, label: `${p.width} × ${p.height}` }))"
+          @update:model-value="onSizeSelectString($event)"
+        />
         <small v-if="width && height">{{ width }} × {{ height }}{{ aspectRatio ? ` (${aspectRatio})` : '' }}</small>
       </label>
 
@@ -174,14 +176,14 @@ const availableOperations = computed(() => {
         </label>
       </div>
 
-      <template v-if="selectedOperation === 'edit' || selectedOperation === 'upscale'">
+      <template v-if="selectedOperation === 'edit' || selectedOperation === 'image2image' || selectedOperation === 'upscale'">
         <div class="source-chip">
-          <span>{{ $t('inspector.sourceImage') }}</span>
+          <span>{{ selectedOperation === 'image2image' ? $t('inspector.referenceImage') : $t('inspector.sourceImage') }}</span>
           <strong>{{ sourceImageTitle ?? '—' }}</strong>
         </div>
 
-        <label v-if="selectedOperation === 'edit'" class="field">
-          <span>{{ $t('inspector.uploadSource') }}</span>
+        <label v-if="selectedOperation === 'edit' || selectedOperation === 'image2image'" class="field">
+          <span>{{ selectedOperation === 'image2image' ? $t('inspector.uploadReference') : $t('inspector.uploadSource') }}</span>
           <input
             accept="image/png,image/jpeg,image/webp"
             type="file"
@@ -205,15 +207,12 @@ const availableOperations = computed(() => {
       <label v-for="option in providerOptionDefinitions" :key="option.id" class="field">
         <span>{{ optionLabel(option.id) }}</span>
 
-        <select
+        <CustomSelect
           v-if="option.control === 'select'"
-          :value="providerOptions[option.id]"
-          @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
-        >
-          <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
-            {{ t(`providerOptions.${option.id}${selectOption.value}`, selectOption.label) }}
-          </option>
-        </select>
+          :model-value="String(providerOptions[option.id] ?? '')"
+          :options="(option.options ?? []).map(o => ({ value: o.value, label: t(`providerOptions.${option.id}${o.value}`, o.label) }))"
+          @update:model-value="emit('update:providerOption', { id: option.id, value: $event })"
+        />
 
         <input
           v-else-if="option.control === 'number'"
@@ -225,6 +224,19 @@ const availableOperations = computed(() => {
           @input="emit('update:providerOption', { id: option.id, value: Number(($event.target as HTMLInputElement).value) })"
         />
 
+        <template v-else-if="option.control === 'text' && option.id === 'styleReferenceSource'">
+          <input
+            accept="image/png,image/jpeg,image/webp"
+            type="file"
+            @change="
+              ($event) => {
+                const file = ($event.target as HTMLInputElement).files?.[0]
+                if (file) emit('update:styleReferenceImageFile', file)
+              }
+            "
+          />
+          <small>{{ props.styleReferenceImageFilename ?? $t('inspector.uploadHint') }}</small>
+        </template>
         <input
           v-else-if="option.control === 'text'"
           :value="String(providerOptions[option.id] ?? '')"

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import {
   type ImageInputSource,
@@ -67,6 +67,8 @@ export function useWorkbench() {
 
   const sourceImageDataUrl = ref('')
   const sourceImageFilename = ref('source.png')
+  const styleReferenceImageDataUrl = ref('')
+  const styleReferenceImageFilename = ref('')
   const latestPlan = ref<PreparedRunPlan>()
   const lastRunError = ref<string>()
   const lastRunMessage = ref<string>()
@@ -127,7 +129,7 @@ export function useWorkbench() {
       .filter((artifact): artifact is Artifact => Boolean(artifact))
   })
   const recentOutputArtifacts = computed(() => artifacts.value.filter((artifact) => artifact.kind !== 'input').slice(-3).reverse())
-  const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value) : []))
+  const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value, selectedOperation.value) : []))
   const availableSizePresets = computed(() => activeModel.value?.constraints?.sizePresets ?? [])
   const supportedAspectRatios = computed(() => activeModel.value?.constraints?.supportedAspectRatios ?? [])
   const supportsCustomSize = computed(() => {
@@ -185,26 +187,37 @@ export function useWorkbench() {
   )
 
   function buildOperationSpec(): OperationSpec {
+    const supportsAspectRatio = activeProvider.value?.capabilities.supportsAspectRatio !== false
+      && activeModel.value?.constraints?.supportedAspectRatios?.length
     const base = {
       prompt: prompt.value,
       seed: seed.value,
       numImages: numImages.value,
       responseFormat: 'base64' as const,
       ...(negativePrompt.value ? { negativePrompt: negativePrompt.value } : {}),
-      ...(aspectRatio.value ? { aspectRatio: aspectRatio.value } : {}),
+      ...(supportsAspectRatio && aspectRatio.value ? { aspectRatio: aspectRatio.value } : {}),
     }
 
     if (selectedOperation.value === 'edit') {
       const modelConstraints = activeModel.value?.constraints
       const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
         && modelConstraints?.supportsCustomSize !== false
+      const hasAspectRatios = modelConstraints?.supportedAspectRatios?.length
 
       return {
         kind: 'edit',
         sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
-        ...(canCustomSize || !modelConstraints?.supportedAspectRatios?.length
+        ...(canCustomSize || !hasAspectRatios
           ? { size: { width: width.value, height: height.value } }
           : {}),
+        ...base,
+      }
+    }
+
+    if (selectedOperation.value === 'image2image') {
+      return {
+        kind: 'image2image',
+        sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
         ...base,
       }
     }
@@ -221,10 +234,11 @@ export function useWorkbench() {
     const modelConstraints = activeModel.value?.constraints
     const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
       && modelConstraints?.supportsCustomSize !== false
+    const hasAspectRatios = modelConstraints?.supportedAspectRatios?.length
 
     return {
       kind: 'generate',
-      ...(canCustomSize || !modelConstraints?.supportedAspectRatios?.length
+      ...(canCustomSize || !hasAspectRatios
         ? { size: { width: width.value, height: height.value } }
         : {}),
       ...base,
@@ -240,7 +254,7 @@ export function useWorkbench() {
       modelId: selectedModelId.value,
       auth: trimmedApiKey ? { apiKey: trimmedApiKey } : (savedKey ? { apiKey: savedKey } : {}),
       operation: buildOperationSpec(),
-      ...(selectedOperation.value === 'edit' && selectedSourceImageInput.value
+      ...((selectedOperation.value === 'edit' || selectedOperation.value === 'image2image') && selectedSourceImageInput.value
         ? { imageInputs: selectedSourceImageInput.value }
         : {}),
       providerOptions: providerOptions.value,
@@ -315,6 +329,13 @@ export function useWorkbench() {
     sourceImageFilename.value = file.name
   }
 
+  async function updateStyleReferenceImage(file: File) {
+    const dataUrl = await fileToDataUrl(file)
+    styleReferenceImageDataUrl.value = dataUrl
+    styleReferenceImageFilename.value = file.name
+    providerOptions.value.styleReferenceSource = dataUrl
+  }
+
   function applyProviderDefaults() {
     if (!activeProvider.value || !selectedModelId.value) {
       providerOptions.value = {}
@@ -322,6 +343,15 @@ export function useWorkbench() {
     }
 
     providerOptions.value = normalizeProviderOptions(activeProvider.value, selectedModelId.value)
+
+    const styleRefSource = providerOptions.value.styleReferenceSource
+    if (typeof styleRefSource === 'string' && styleRefSource.trim().length > 0) {
+      styleReferenceImageDataUrl.value = styleRefSource
+      styleReferenceImageFilename.value = 'reference.png'
+    } else {
+      styleReferenceImageDataUrl.value = ''
+      styleReferenceImageFilename.value = ''
+    }
   }
 
   function syncSizeToModelConstraints() {
@@ -354,12 +384,17 @@ export function useWorkbench() {
     }
 
     applyProviderDefaults()
-    syncSizeToModelConstraints()
+    void nextTick(() => syncSizeToModelConstraints())
   })
 
   watch(selectedModelId, () => {
     applyProviderDefaults()
-    syncSizeToModelConstraints()
+    void nextTick(() => syncSizeToModelConstraints())
+
+    const model = activeModel.value
+    if (model && !model.operations.includes(selectedOperation.value)) {
+      selectedOperation.value = model.operations[0] ?? 'generate'
+    }
   })
 
   let aspectRatioTimer: ReturnType<typeof setTimeout> | undefined
@@ -383,7 +418,7 @@ export function useWorkbench() {
 
   watch(aspectRatio, (ratio) => {
     const size = aspectRatioSizeMap[ratio]
-    if (size) {
+    if (size && activeProvider.value?.capabilities.supportsAspectRatio !== false && activeModel.value?.constraints?.supportedAspectRatios?.length) {
       width.value = size.width
       height.value = size.height
     }
@@ -463,6 +498,9 @@ export function useWorkbench() {
     apiKey,
     sourceImageDataUrl,
     sourceImageFilename,
+    styleReferenceImageDataUrl,
+    styleReferenceImageFilename,
+    updateStyleReferenceImage,
     latestPlan,
     lastRunError,
     lastRunMessage,

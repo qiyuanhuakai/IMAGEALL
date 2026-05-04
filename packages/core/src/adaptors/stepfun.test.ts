@@ -4,7 +4,7 @@ import type { UnifiedRunInput } from '../domain'
 import { stepfunAdaptor } from './stepfun'
 
 describe('StepFunAdaptor', () => {
-  it('builds step-image-edit-2 edit requests as JSON', async () => {
+  it('builds step-image-edit-2 edit requests as multipart form-data', async () => {
     const input: UnifiedRunInput = {
       providerId: 'stepfun',
       modelId: 'step-image-edit-2',
@@ -20,6 +20,7 @@ describe('StepFunAdaptor', () => {
         {
           kind: 'data-url',
           value: 'data:image/png;base64,ZmFrZQ==',
+          filename: 'input.png',
         },
       ],
       providerOptions: {
@@ -30,15 +31,15 @@ describe('StepFunAdaptor', () => {
     const request = await stepfunAdaptor.buildRequest(input)
 
     expect(request.url).toBe('https://api.stepfun.com/v1/images/edits')
-    expect(request.bodyType).toBe('json')
-    expect(request.body).toEqual({
-      model: 'step-image-edit-2',
-      prompt: 'Make it into an editorial poster',
-      response_format: 'b64_json',
-      negative_prompt: 'muddy type',
-      text_mode: true,
-      image: 'data:image/png;base64,ZmFrZQ==',
-    })
+    expect(request.bodyType).toBe('form-data')
+    expect(request.body).toBeInstanceOf(FormData)
+    const formData = request.body as FormData
+    expect(formData.get('model')).toBe('step-image-edit-2')
+    expect(formData.get('prompt')).toBe('Make it into an editorial poster')
+    expect(formData.get('response_format')).toBe('b64_json')
+    expect(formData.get('negative_prompt')).toBe('muddy type')
+    expect(formData.get('text_mode')).toBe('true')
+    expect(formData.get('image')).toBeInstanceOf(Blob)
   })
 
   it('uses multipart for step-1x-edit', async () => {
@@ -67,7 +68,7 @@ describe('StepFunAdaptor', () => {
     expect(request.body).toBeInstanceOf(FormData)
   })
 
-  it('includes steps and cfg_scale for step-image-edit-2', async () => {
+  it('includes steps and cfg_scale for step-image-edit-2 generate', async () => {
     const input: UnifiedRunInput = {
       providerId: 'stepfun',
       modelId: 'step-image-edit-2',
@@ -94,6 +95,37 @@ describe('StepFunAdaptor', () => {
       steps: 25,
       cfg_scale: 7.5,
     })
+  })
+
+  it('includes steps and cfg_scale in step-image-edit-2 multipart form', async () => {
+    const input: UnifiedRunInput = {
+      providerId: 'stepfun',
+      modelId: 'step-image-edit-2',
+      auth: { apiKey: 'step-key' },
+      operation: {
+        kind: 'edit',
+        prompt: 'Refine this image',
+        sourceArtifactId: 'artifact-1',
+      },
+      imageInputs: [
+        {
+          kind: 'data-url',
+          value: 'data:image/png;base64,ZmFrZQ==',
+          filename: 'input.png',
+        },
+      ],
+      providerOptions: {
+        steps: 30,
+        cfgScale: 5.0,
+      },
+    }
+
+    const request = await stepfunAdaptor.buildRequest(input)
+
+    expect(request.bodyType).toBe('form-data')
+    const formData = request.body as FormData
+    expect(formData.get('steps')).toBe('30')
+    expect(formData.get('cfg_scale')).toBe('5')
   })
 
   it('includes steps and cfg_scale in step-1x-edit multipart form', async () => {
@@ -191,13 +223,13 @@ describe('StepFunAdaptor', () => {
     expect(stepfunAdaptor.validateOperation(baseEdit('step-1x-edit', 6.0)).ok).toBe(true)
   })
 
-  it('routes step-1x-medium edit to image2image', async () => {
+  it('routes step-1x-medium image2image to image2image endpoint', async () => {
     const input: UnifiedRunInput = {
       providerId: 'stepfun',
       modelId: 'step-1x-medium',
       auth: { apiKey: 'step-key' },
       operation: {
-        kind: 'edit',
+        kind: 'image2image',
         prompt: 'Turn this into a calmer print poster',
         sourceArtifactId: 'artifact-1',
       },
@@ -223,5 +255,39 @@ describe('StepFunAdaptor', () => {
       source_url: 'https://example.com/source.png',
       source_weight: 0.35,
     })
+  })
+
+  it('validates image2image requires reference image', () => {
+    const result = stepfunAdaptor.validateOperation({
+      providerId: 'stepfun',
+      modelId: 'step-1x-medium',
+      auth: { apiKey: 'step-key' },
+      operation: {
+        kind: 'image2image',
+        prompt: 'test',
+        sourceArtifactId: 'a-1',
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('reference image'))).toBe(true)
+  })
+
+  it('validates image2image source_weight range', () => {
+    const base = (sourceWeight: number) => ({
+      providerId: 'stepfun',
+      modelId: 'step-1x-medium',
+      auth: { apiKey: 'step-key' },
+      operation: { kind: 'image2image' as const, prompt: 'test', sourceArtifactId: 'a-1' },
+      imageInputs: [{ kind: 'data-url' as const, value: 'data:image/png;base64,ZmFrZQ==' }],
+      providerOptions: { sourceWeight },
+    })
+
+    expect(stepfunAdaptor.validateOperation(base(0)).ok).toBe(false)
+    expect(stepfunAdaptor.validateOperation(base(-0.1)).ok).toBe(false)
+    expect(stepfunAdaptor.validateOperation(base(1.1)).ok).toBe(false)
+    expect(stepfunAdaptor.validateOperation(base(0.05)).ok).toBe(true)
+    expect(stepfunAdaptor.validateOperation(base(1)).ok).toBe(true)
+    expect(stepfunAdaptor.validateOperation(base(0.5)).ok).toBe(true)
   })
 })
