@@ -9,6 +9,10 @@ const props = defineProps<{
   selectedWorkspaceId: string | undefined
   selectedLocale: LocaleCode
   usingFallbackData: boolean
+  isRestoringWorkspace?: boolean
+  restorationStatus: string | undefined
+  restorationError: string | undefined
+  workspacePath: string | undefined
 }>()
 
 const emit = defineEmits<{
@@ -158,10 +162,26 @@ function selectFolder() {
       <h1>ImageAll</h1>
     </div>
 
-    <div class="topbar__right">
-      <span v-if="usingFallbackData" class="status-chip status-chip--muted">{{ $t('app.usingFallback') }}</span>
+     <div class="topbar__right">
+       <span v-if="usingFallbackData" class="status-chip status-chip--muted">{{ $t('app.usingFallback') }}</span>
 
-      <button class="icon-btn" type="button" :title="$t('topbar.providers')" @click.stop="openProviders">
+       <!-- Workspace path display -->
+       <span v-if="workspacePath" class="topbar__path" :title="workspacePath">
+         📁 {{ workspacePath.split('/').pop() }}
+       </span>
+
+       <!-- Restoration status -->
+       <span v-if="isRestoringWorkspace" class="status-chip status-chip--loading">
+         {{ $t('workspace.restoring') }}
+       </span>
+       <span v-else-if="restorationStatus" class="status-chip status-chip--success">
+         {{ restorationStatus }}
+       </span>
+       <span v-else-if="restorationError" class="status-chip status-chip--error">
+         {{ restorationError }}
+       </span>
+
+       <button class="icon-btn" type="button" :title="$t('topbar.providers')" @click.stop="openProviders">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -422,5 +442,29 @@ function selectFolder() {
 .dir-item--back {
   color: rgba(237, 243, 255, 0.5);
   border-bottom: 1px solid rgba(146, 169, 214, 0.08);
+}
+
+.topbar__path {
+  font-size: 0.68rem;
+  color: rgba(237, 237, 255, 0.5);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-chip--loading {
+  background: rgba(100, 140, 255, 0.15);
+  color: #8da6ff;
+}
+
+.status-chip--success {
+  background: rgba(40, 190, 120, 0.15);
+  color: #4ade80;
+}
+
+.status-chip--error {
+  background: rgba(240, 80, 80, 0.15);
+  color: #f87171;
 }
 </style>

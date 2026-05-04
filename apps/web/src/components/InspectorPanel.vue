@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { OperationKind, PreparedRunPlan, ProviderModelManifest, ProviderOptionDefinition } from '@imageall/core'
+import { useI18n } from 'vue-i18n'
 
-defineProps<{
+const props = defineProps<{
   selectedOperation: OperationKind
   prompt: string
   negativePrompt: string
@@ -23,8 +25,6 @@ defineProps<{
   isPreparingRun: boolean
   isExecutingRun: boolean
 }>()
-
-import { useI18n } from 'vue-i18n'
 
 const emit = defineEmits([
   'update:selectedOperation',
@@ -58,7 +58,12 @@ function onSizeSelect(event: Event) {
   emit('update:height', h)
 }
 
-const operations: OperationKind[] = ['generate', 'edit', 'upscale']
+const allOperations: OperationKind[] = ['generate', 'edit', 'upscale']
+
+const availableOperations = computed(() => {
+  const supported = props.activeModel?.operations ?? allOperations
+  return allOperations.filter((op) => supported.includes(op))
+})
 </script>
 
 <template>
@@ -76,7 +81,7 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
       </div>
       <div class="pill-row">
         <button
-          v-for="operation in operations"
+          v-for="operation in availableOperations"
           :key="operation"
           class="pill-button"
           :class="{ 'pill-button--active': operation === selectedOperation }"

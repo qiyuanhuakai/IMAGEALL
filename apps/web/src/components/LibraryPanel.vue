@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Artifact, Run, Workspace } from '@imageall/core'
+import { resolveArtifactUri } from '../lib/api'
 
 defineProps<{
   workspace: Workspace | undefined
@@ -37,7 +38,7 @@ const emit = defineEmits<{
         type="button"
         @click="emit('update:selectedArtifactId', artifact.id)"
       >
-        <img :src="artifact.thumbnailUri ?? artifact.uri" :alt="artifact.title" />
+        <img :src="resolveArtifactUri(artifact.thumbnailUri ?? artifact.uri)" :alt="artifact.title" />
         <div>
           <strong>{{ artifact.title }}</strong>
           <p>{{ artifact.kind }} · {{ artifact.width }}×{{ artifact.height }}</p>

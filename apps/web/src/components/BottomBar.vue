@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type {
   LocaleCode,
   LocaleOption,
@@ -10,9 +10,9 @@ import type {
   ProviderOptionDefinition,
   Workspace,
 } from '@imageall/core'
+import { useI18n } from 'vue-i18n'
 
-defineProps<{
-  // Provider / Model selection (moved from WorkbenchTopBar)
+const props = defineProps<{
   locales: LocaleOption[]
   workspaces: Workspace[]
   providers: ProviderManifest[]
@@ -22,8 +22,6 @@ defineProps<{
   selectedModelId: string
   selectedLocale: LocaleCode
   usingFallbackData: boolean
-
-  // Inspector controls (moved from InspectorPanel)
   selectedOperation: OperationKind
   prompt: string
   negativePrompt: string
@@ -36,7 +34,10 @@ defineProps<{
   sourceImageFilename: string | undefined
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
+  supportedAspectRatios: string[]
   supportsCustomSize: boolean
+  numImages: number
+  maxImages: number
   providerOptions: Record<string, string | number | boolean>
   providerOptionDefinitions: ProviderOptionDefinition[]
   latestPlan: PreparedRunPlan | undefined
@@ -61,17 +62,21 @@ const emit = defineEmits([
   'apply:sizePreset',
   'update:providerOption',
   'update:sourceImageFile',
+  'update:numImages',
   'run',
 ])
 
-import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 
-const operations: OperationKind[] = ['generate', 'edit', 'upscale']
+const allOperations: OperationKind[] = ['generate', 'edit', 'upscale']
+
+const availableOperations = computed(() => {
+  const supported = props.activeModel?.operations ?? allOperations
+  return allOperations.filter((op) => supported.includes(op))
+})
 
 const showParameters = ref(false)
 const showProviderOptions = ref(false)
-
-const { t } = useI18n()
 
 function optionLabel(id: string): string {
   return t(`providerOptions.${id}`, id)
@@ -97,10 +102,10 @@ function onSizeSelect(event: Event) {
         <label class="bb-select">
           <span>{{ $t('topbar.provider') }}</span>
           <select
-            :value="selectedProviderId"
+            :value="props.selectedProviderId"
             @change="emit('update:selectedProviderId', ($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="provider in providers" :key="provider.id" :value="provider.id">
+            <option v-for="provider in props.providers" :key="provider.id" :value="provider.id">
               {{ provider.label }}
             </option>
           </select>
@@ -109,10 +114,10 @@ function onSizeSelect(event: Event) {
         <label class="bb-select">
           <span>{{ $t('topbar.model') }}</span>
           <select
-            :value="selectedModelId"
+            :value="props.selectedModelId"
             @change="emit('update:selectedModelId', ($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="model in models" :key="model.id" :value="model.id">
+            <option v-for="model in props.models" :key="model.id" :value="model.id">
               {{ model.label }}
             </option>
           </select>
@@ -121,10 +126,10 @@ function onSizeSelect(event: Event) {
 
       <div class="bb-operations">
         <button
-          v-for="operation in operations"
+          v-for="operation in availableOperations"
           :key="operation"
           class="pill-button"
-          :class="{ 'pill-button--active': operation === selectedOperation }"
+          :class="{ 'pill-button--active': operation === props.selectedOperation }"
           type="button"
           @click="emit('update:selectedOperation', operation)"
         >
@@ -137,19 +142,19 @@ function onSizeSelect(event: Event) {
     <div class="bb-row bb-row--prompt">
       <textarea
         class="bb-prompt"
-        :value="prompt"
+        :value="props.prompt"
         rows="2"
         :placeholder="$t('inspector.prompt')"
         @input="emit('update:prompt', ($event.target as HTMLTextAreaElement).value)"
       />
       <button
         class="bb-run-btn"
-        :disabled="isPreparingRun || isExecutingRun"
+        :disabled="props.isPreparingRun || props.isExecutingRun"
         type="button"
         @click="emit('run')"
       >
-        <span class="bb-run-btn__icon">{{ isPreparingRun || isExecutingRun ? '◌' : '▶' }}</span>
-        <span>{{ isPreparingRun || isExecutingRun ? $t('inspector.running') : $t('inspector.run') }}</span>
+        <span class="bb-run-btn__icon">{{ props.isPreparingRun || props.isExecutingRun ? '◌' : '▶' }}</span>
+        <span>{{ props.isPreparingRun || props.isExecutingRun ? $t('inspector.running') : $t('inspector.run') }}</span>
       </button>
     </div>
 
@@ -161,30 +166,44 @@ function onSizeSelect(event: Event) {
       </button>
 
       <div v-show="showParameters" class="bb-section-body">
-        <!-- Row: Size / Width / Height / Seed -->
+        <!-- Row: Size / Width / Height / Seed / NumImages -->
         <div class="bb-params-grid bb-params-grid--main">
           <label class="bb-param">
             <span>{{ $t('inspector.size') }}</span>
             <select
-              :value="`${width}x${height}`"
+              v-if="props.supportedAspectRatios.length > 0"
+              :value="props.aspectRatio"
+              @change="emit('update:aspectRatio', ($event.target as HTMLSelectElement).value)"
+            >
+              <option
+                v-for="ratio in props.supportedAspectRatios"
+                :key="ratio"
+                :value="ratio"
+              >
+                {{ ratio }}
+              </option>
+            </select>
+            <select
+              v-else
+              :value="`${props.width}x${props.height}`"
               @change="onSizeSelect"
             >
               <option
-                v-for="preset in availableSizePresets"
+                v-for="preset in props.availableSizePresets"
                 :key="`${preset.width}x${preset.height}`"
                 :value="`${preset.width}x${preset.height}`"
               >
                 {{ preset.width }} × {{ preset.height }}
               </option>
             </select>
-            <small v-if="aspectRatio">{{ aspectRatio }}</small>
+            <small v-if="props.aspectRatio && props.supportedAspectRatios.length > 0">{{ props.aspectRatio }}</small>
           </label>
 
-          <template v-if="supportsCustomSize">
+          <template v-if="props.supportsCustomSize">
             <label class="bb-param">
               <span>{{ $t('inspector.width') }}</span>
               <input
-                :value="width"
+                :value="props.width"
                 type="number"
                 @input="emit('update:width', Number(($event.target as HTMLInputElement).value))"
               />
@@ -192,7 +211,7 @@ function onSizeSelect(event: Event) {
             <label class="bb-param">
               <span>{{ $t('inspector.height') }}</span>
               <input
-                :value="height"
+                :value="props.height"
                 type="number"
                 @input="emit('update:height', Number(($event.target as HTMLInputElement).value))"
               />
@@ -202,18 +221,29 @@ function onSizeSelect(event: Event) {
           <label class="bb-param">
             <span>{{ $t('inspector.seed') }}</span>
             <input
-              :value="seed"
+              :value="props.seed"
               type="number"
               @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))"
+            />
+          </label>
+
+          <label class="bb-param">
+            <span>{{ $t('inspector.numImages') }}</span>
+            <input
+              :value="props.numImages"
+              type="number"
+              min="1"
+              :max="props.maxImages"
+              @input="emit('update:numImages', Number(($event.target as HTMLInputElement).value))"
             />
           </label>
         </div>
 
         <!-- Negative prompt (only for providers that support it) -->
-        <label v-if="supportsNegativePrompt" class="bb-param">
+        <label v-if="props.supportsNegativePrompt" class="bb-param">
           <span>{{ $t('inspector.negativePrompt') }}</span>
           <textarea
-            :value="negativePrompt"
+            :value="props.negativePrompt"
             rows="2"
             @input="emit('update:negativePrompt', ($event.target as HTMLTextAreaElement).value)"
           />
@@ -224,11 +254,11 @@ function onSizeSelect(event: Event) {
           <div class="bb-param">
             <span>{{ $t('inspector.sourceImage') }}</span>
             <div class="source-chip">
-              <strong>{{ sourceImageTitle ?? '—' }}</strong>
+              <strong>{{ props.sourceImageTitle ?? '—' }}</strong>
             </div>
           </div>
 
-          <label v-if="selectedOperation === 'edit'" class="bb-param">
+          <label v-if="props.selectedOperation === 'edit'" class="bb-param">
             <span>{{ $t('inspector.uploadSource') }}</span>
             <input
               accept="image/png,image/jpeg,image/webp"
@@ -240,14 +270,14 @@ function onSizeSelect(event: Event) {
                 }
               "
             />
-            <small>{{ sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
+            <small>{{ props.sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
           </label>
         </div>
       </div>
     </div>
 
     <!-- Section: Provider Options (collapsible) -->
-    <div v-if="providerOptionDefinitions.length" class="bb-section">
+    <div v-if="props.providerOptionDefinitions.length" class="bb-section">
       <button class="bb-section-toggle" type="button" @click="showProviderOptions = !showProviderOptions">
         <span class="bb-section-arrow" :class="{ 'bb-section-arrow--open': showProviderOptions }">▸</span>
         {{ $t('inspector.providerOptions') }}
@@ -255,12 +285,12 @@ function onSizeSelect(event: Event) {
 
       <div v-show="showProviderOptions" class="bb-section-body">
         <div class="bb-params-grid bb-params-grid--provider">
-          <label v-for="option in providerOptionDefinitions" :key="option.id" class="bb-param">
+          <label v-for="option in props.providerOptionDefinitions" :key="option.id" class="bb-param">
             <span>{{ optionLabel(option.id) }}</span>
 
             <select
               v-if="option.control === 'select'"
-              :value="providerOptions[option.id]"
+              :value="props.providerOptions[option.id]"
               @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
             >
               <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
@@ -270,7 +300,7 @@ function onSizeSelect(event: Event) {
 
             <input
               v-else-if="option.control === 'number'"
-              :value="providerOptions[option.id]"
+              :value="props.providerOptions[option.id]"
               :min="option.min"
               :max="option.max"
               :step="option.step"
@@ -280,13 +310,13 @@ function onSizeSelect(event: Event) {
 
             <input
               v-else-if="option.control === 'text'"
-              :value="String(providerOptions[option.id] ?? '')"
+              :value="String(props.providerOptions[option.id] ?? '')"
               @input="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLInputElement).value })"
             />
 
             <label v-else class="checkbox-field">
               <input
-                :checked="Boolean(providerOptions[option.id])"
+                :checked="Boolean(props.providerOptions[option.id])"
                 type="checkbox"
                 @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLInputElement).checked })"
               />

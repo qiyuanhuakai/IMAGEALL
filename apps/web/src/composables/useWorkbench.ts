@@ -15,7 +15,7 @@ import {
   type WorkbenchBootstrap,
 } from '@imageall/core'
 
-import { executePreparedRun, fetchBootstrap, prepareRun } from '../lib/api'
+import { checkWorkspaceStatus, executePreparedRun, fetchBootstrap, prepareRun, restoreWorkspace } from '../lib/api'
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b)
@@ -71,6 +71,13 @@ export function useWorkbench() {
   const isExecutingRun = ref(false)
   const liveOutputs = ref<Array<{ uri?: string; base64?: string; mimeType?: string; seed?: number }>>([])
 
+  const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
+
+  const isRestoringWorkspace = ref(false)
+  const restorationStatus = ref<string>()
+  const restorationError = ref<string>()
+  const workspacePath = ref<string>(savedWorkspaceFolder ?? '')
+
   const registry = computed(() => createProviderRegistry(bootstrap.value.providers))
   const locales = computed(() => bootstrap.value.locales)
   const providers = computed(() => bootstrap.value.providers)
@@ -90,16 +97,19 @@ export function useWorkbench() {
   const recentOutputArtifacts = computed(() => artifacts.value.filter((artifact) => artifact.kind !== 'input').slice(-3).reverse())
   const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value) : []))
   const availableSizePresets = computed(() => activeModel.value?.constraints?.sizePresets ?? [])
+  const supportedAspectRatios = computed(() => activeModel.value?.constraints?.supportedAspectRatios ?? [])
   const supportsCustomSize = computed(() => {
     const provider = activeProvider.value
     if (!provider) return true
-    return provider.capabilities.supportsCustomSize === true
+    if (provider.capabilities.supportsCustomSize !== true) return false
+    return activeModel.value?.constraints?.supportsCustomSize !== false
   })
   const supportsNegativePrompt = computed(() => {
     const provider = activeProvider.value
     if (!provider) return true
     return provider.capabilities.supportsNegativePrompt !== false
   })
+  const maxImages = computed(() => activeModel.value?.constraints?.maxImages ?? 9)
   const selectedSourceImageInput = computed<ImageInputSource[] | undefined>(() => {
     if (!sourceImageDataUrl.value.trim()) {
       return undefined
@@ -148,10 +158,16 @@ export function useWorkbench() {
     }
 
     if (selectedOperation.value === 'edit') {
+      const modelConstraints = activeModel.value?.constraints
+      const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
+        && modelConstraints?.supportsCustomSize !== false
+
       return {
         kind: 'edit',
         sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
-        ...(selectedModelId.value === 'step-image-edit-2' ? {} : { size: { width: width.value, height: height.value } }),
+        ...(canCustomSize || !modelConstraints?.supportedAspectRatios?.length
+          ? { size: { width: width.value, height: height.value } }
+          : {}),
         ...base,
       }
     }
@@ -165,9 +181,15 @@ export function useWorkbench() {
       }
     }
 
+    const modelConstraints = activeModel.value?.constraints
+    const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
+      && modelConstraints?.supportsCustomSize !== false
+
     return {
       kind: 'generate',
-      size: { width: width.value, height: height.value },
+      ...(canCustomSize || !modelConstraints?.supportedAspectRatios?.length
+        ? { size: { width: width.value, height: height.value } }
+        : {}),
       ...base,
     }
   }
@@ -300,6 +322,17 @@ export function useWorkbench() {
   })
 
   let aspectRatioTimer: ReturnType<typeof setTimeout> | undefined
+  const aspectRatioSizeMap: Record<string, { width: number; height: number }> = {
+    '1:1': { width: 1024, height: 1024 },
+    '16:9': { width: 1280, height: 720 },
+    '4:3': { width: 1152, height: 864 },
+    '3:2': { width: 1248, height: 832 },
+    '2:3': { width: 832, height: 1248 },
+    '3:4': { width: 864, height: 1152 },
+    '9:16': { width: 720, height: 1280 },
+    '21:9': { width: 1344, height: 576 },
+  }
+
   watch([width, height], () => {
     if (aspectRatioTimer) clearTimeout(aspectRatioTimer)
     aspectRatioTimer = setTimeout(() => {
@@ -307,7 +340,13 @@ export function useWorkbench() {
     }, 300)
   })
 
-  const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
+  watch(aspectRatio, (ratio) => {
+    const size = aspectRatioSizeMap[ratio]
+    if (size) {
+      width.value = size.width
+      height.value = size.height
+    }
+  })
 
   async function loadBootstrap() {
     isLoading.value = true
@@ -359,8 +398,10 @@ export function useWorkbench() {
     recentOutputArtifacts,
     currentProviderOptions,
     availableSizePresets,
+    supportedAspectRatios,
     supportsCustomSize,
     supportsNegativePrompt,
+    maxImages,
     selectedWorkspaceId,
     selectedArtifactId,
     selectedOperation,
@@ -393,16 +434,92 @@ export function useWorkbench() {
     },
     setWorkspaceFolder: async (path: string) => {
       localStorage.setItem('imageall_workspace_folder', path)
+      workspacePath.value = path
+
       const ws = bootstrap.value.workspaces[0]
       if (ws) ws.name = path.split('/').pop() ?? path
+
       try {
-        await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/workspace/folder`, {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+        const response = await fetch(`${apiBaseUrl}/api/workspace/folder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path }),
         })
-      } catch { /* ignore */ }
+        const data = await response.json()
+
+        if (data.ok && data.restored) {
+          if (data.workspace) {
+            const existingWs = bootstrap.value.workspaces[0]
+            if (existingWs) {
+              existingWs.id = data.workspace.id
+              existingWs.name = data.workspace.name
+              existingWs.locale = data.workspace.locale
+              existingWs.uiState = data.workspace.uiState
+            }
+          }
+          bootstrap.value.artifacts = data.artifacts ?? []
+          bootstrap.value.runs = data.runs ?? []
+          const artifactCount = data.artifacts?.length ?? 0
+          const runCount = data.runs?.length ?? 0
+          if (artifactCount > 0) {
+            selectedArtifactId.value = data.artifacts[0]?.id
+          }
+
+          const warnings = data.warnings?.length ? ` (${data.warnings.length} warnings)` : ''
+          restorationStatus.value = `Restored ${artifactCount} artifacts and ${runCount} runs from workspace${warnings}`
+        } else if (data.ok) {
+          bootstrap.value.artifacts = []
+          bootstrap.value.runs = []
+        }
+      } catch (error) {
+        restorationError.value = error instanceof Error ? error.message : 'Failed to set workspace folder'
+      }
     },
+    isRestoringWorkspace,
+    restorationStatus,
+    restorationError,
+    workspacePath,
+    attemptWorkspaceRestore,
+  }
+
+  async function attemptWorkspaceRestore(path: string) {
+    isRestoringWorkspace.value = true
+    restorationStatus.value = undefined
+    restorationError.value = undefined
+
+    try {
+      const status = await checkWorkspaceStatus(path)
+      if (status.exists) {
+        const restored = await restoreWorkspace(path)
+
+        bootstrap.value.artifacts = restored.artifacts
+        bootstrap.value.runs = restored.runs
+
+        if (restored.workspace) {
+          const ws = bootstrap.value.workspaces[0]
+          if (ws) {
+            ws.id = restored.workspace.id
+            ws.name = restored.workspace.name
+            ws.locale = restored.workspace.locale
+            ws.uiState = restored.workspace.uiState
+          }
+        }
+
+        if (restored.artifacts.length > 0) {
+          selectedArtifactId.value = restored.artifacts[0]?.id
+        }
+
+        const warnings = restored.warnings.length > 0 ? ` (${restored.warnings.length} warnings)` : ''
+        restorationStatus.value = `Restored ${restored.artifacts.length} artifacts and ${restored.runs.length} runs from workspace${warnings}`
+      } else {
+        restorationStatus.value = 'No persisted data in this folder'
+      }
+    } catch (error) {
+      restorationError.value = error instanceof Error ? error.message : 'Failed to restore workspace'
+    } finally {
+      isRestoringWorkspace.value = false
+    }
   }
 }
 

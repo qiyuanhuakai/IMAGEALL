@@ -17,6 +17,14 @@ export default {
     selectFolder: 'Workspace Folder',
     useThisFolder: 'Use This Folder',
   },
+  workspace: {
+    restoring: 'Restoring workspace…',
+    restored: 'Restored {count} artifacts',
+    restoredWithRuns: 'Restored {artifacts} artifacts and {runs} runs',
+    noPersistedData: 'No persisted data in this folder',
+    imageMissing: 'Image file missing',
+    selectToPersist: 'Select a folder to persist workspace data',
+  },
   library: {
     title: 'Library',
     lineage: 'Lineage-aware outputs',

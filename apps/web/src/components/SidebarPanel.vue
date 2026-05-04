@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Artifact, Run, Workspace } from '@imageall/core'
+import { resolveArtifactUri } from '../lib/api'
 
 type SidebarTab = 'artifacts' | 'history'
 
@@ -73,7 +74,7 @@ function formatRunTime(iso: string): string {
           >
             <img
               v-if="artifact.thumbnailUri ?? artifact.uri"
-              :src="artifact.thumbnailUri ?? artifact.uri"
+              :src="resolveArtifactUri(artifact.thumbnailUri ?? artifact.uri)"
               :alt="artifact.title"
               class="sidebar-item__thumb"
             />

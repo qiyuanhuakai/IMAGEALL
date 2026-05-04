@@ -17,6 +17,14 @@ export default {
     selectFolder: '工作空间文件夹',
     useThisFolder: '使用此文件夹',
   },
+  workspace: {
+    restoring: '正在恢复工作空间…',
+    restored: '已恢复 {count} 个作品',
+    restoredWithRuns: '已恢复 {artifacts} 个作品和 {runs} 条运行记录',
+    noPersistedData: '此文件夹中没有持久化数据',
+    imageMissing: '图片文件丢失',
+    selectToPersist: '选择一个文件夹以持久化工作空间数据',
+  },
   library: {
     title: '资料库',
     lineage: '带 lineage 的结果流',

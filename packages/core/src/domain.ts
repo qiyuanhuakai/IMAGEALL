@@ -145,6 +145,7 @@ export interface ProviderModelManifest {
     promptMaxLength?: number
     supportedAspectRatios?: string[]
     sizePresets?: Array<{ width: number; height: number }>
+    supportsCustomSize?: boolean
   }
   featureFlags?: {
     negativePrompt?: boolean
@@ -275,4 +276,33 @@ export interface WorkbenchBootstrap {
   artifacts: Artifact[]
   runs: Run[]
   selectedWorkspaceId: string
+}
+
+export interface WorkspaceStatus {
+  exists: boolean
+  artifactCount: number
+  runCount: number
+  lastModified?: string
+  workspaceId?: string
+}
+
+export interface RestoredWorkspace {
+  workspace: Workspace
+  artifacts: Artifact[]
+  runs: Run[]
+  restoredAt: string
+  warnings: string[]
+}
+
+export interface WorkspaceMetadata {
+  id: string
+  name: string
+  locale: LocaleCode
+  createdAt: string
+  updatedAt: string
+  selectedArtifactId?: string
+  compareArtifactIds: string[]
+  activeOperation: OperationKind
+  activeProviderId: string
+  activeModelId: string
 }
