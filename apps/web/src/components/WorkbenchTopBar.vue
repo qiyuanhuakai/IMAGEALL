@@ -1,6 +1,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { LocaleCode, LocaleOption, ProviderManifest, Workspace } from '@imageall/core'
+import { saveProviderKeys, loadProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
+import { registerKey, removeKey, listVaultKeys, type KeyListItem } from '../lib/keyVaultClient'
+import CustomSelect from './CustomSelect.vue'
+
+export interface SystemMessage {
+  id: string
+  level: 'info' | 'warning' | 'error' | 'success'
+  text: string
+  timestamp: string
+  source?: string
+}
+
+type SystemMessageLevel = SystemMessage['level']
 
 const props = defineProps<{
   locales: LocaleOption[]
@@ -9,13 +23,21 @@ const props = defineProps<{
   selectedWorkspaceId: string | undefined
   selectedLocale: LocaleCode
   usingFallbackData: boolean
+  isRestoringWorkspace?: boolean
+  workspacePath: string | undefined
+  systemMessages?: SystemMessage[]
+  latestSystemMessage?: SystemMessage | null
 }>()
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   'update:selectedWorkspaceId': [value: string]
   'update:selectedLocale': [value: LocaleCode]
   'update:providerKeys': [keys: Record<string, string>]
   'select:workspaceFolder': [path: string]
+  'dismiss:systemMessage': [id: string]
+  'clear:systemMessages': []
 }>()
 
 const showSettings = ref(false)
@@ -26,12 +48,22 @@ const fsDirs = ref<Array<{ name: string; path: string }>>([])
 const fsLoading = ref(false)
 const fsError = ref('')
 
+const vaultKeys = ref<KeyListItem[]>([])
+const vaultLoading = ref(false)
+const storageEncrypted = ref(isSecureStorageAvailable())
+
 function isLocaleCode(value: string): value is LocaleCode {
   return value === 'en' || value === 'zh-CN'
 }
 
 function handleLocaleChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
+  if (isLocaleCode(value)) {
+    emit('update:selectedLocale', value)
+  }
+}
+
+function onLocaleChange(value: string) {
   if (isLocaleCode(value)) {
     emit('update:selectedLocale', value)
   }
@@ -71,11 +103,11 @@ interface ProviderKeyEntry {
 
 const providerKeys = ref<ProviderKeyEntry[]>([])
 
-function loadProviderKeys() {
+async function loadProviderKeysFromStorage() {
   const saved: Record<string, string> = {}
   try {
-    const raw = localStorage.getItem('imageall_provider_keys')
-    if (raw) Object.assign(saved, JSON.parse(raw))
+    const keys = await loadProviderKeys()
+    Object.assign(saved, keys)
   } catch { /* ignore */ }
 
   providerKeys.value = (props.providers ?? []).map((p) => ({
@@ -86,20 +118,26 @@ function loadProviderKeys() {
   }))
 }
 
-function saveProviderKeys() {
+async function saveProviderKeysToStorage() {
   const map: Record<string, string> = {}
   for (const entry of providerKeys.value) {
     if (entry.value.trim()) {
       map[entry.providerId] = entry.value.trim()
     }
   }
-  localStorage.setItem('imageall_provider_keys', JSON.stringify(map))
+
+  try {
+    await saveProviderKeys(map)
+  } catch (err) {
+    console.warn('[TopBar] Failed to save encrypted keys:', err)
+  }
+
   emit('update:providerKeys', map)
   showProviders.value = false
 }
 
 function openProviders() {
-  loadProviderKeys()
+  loadProviderKeysFromStorage()
   showProviders.value = true
   showSettings.value = false
 }
@@ -149,6 +187,41 @@ function selectFolder() {
   showFolderPicker.value = false
   closeAll()
 }
+
+async function registerToVault(providerId: string, apiKey: string) {
+  vaultLoading.value = true
+  try {
+    const result = await registerKey(providerId, apiKey)
+    if (result.ok) {
+      vaultKeys.value = await listVaultKeys()
+    }
+  } catch (err) {
+    console.warn('[TopBar] Failed to register key to vault:', err)
+  } finally {
+    vaultLoading.value = false
+  }
+}
+
+function formatVaultTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return iso
+  }
+}
+
+async function removeFromVault(keyRef: string) {
+  vaultLoading.value = true
+  try {
+    await removeKey(keyRef)
+    vaultKeys.value = await listVaultKeys()
+  } catch (err) {
+    console.warn('[TopBar] Failed to remove vault key:', err)
+  } finally {
+    vaultLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -158,10 +231,34 @@ function selectFolder() {
       <h1>ImageAll</h1>
     </div>
 
-    <div class="topbar__right">
-      <span v-if="usingFallbackData" class="status-chip status-chip--muted">{{ $t('app.usingFallback') }}</span>
+    <!-- System Messages Bar -->
+    <div v-if="latestSystemMessage" class="topbar__system-message" :class="`topbar__system-message--${latestSystemMessage.level}`">
+      <span class="topbar__system-message-icon">
+        <svg v-if="latestSystemMessage.level === 'error'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <svg v-else-if="latestSystemMessage.level === 'warning'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <svg v-else-if="latestSystemMessage.level === 'success'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+      <span class="topbar__system-message-text">{{ latestSystemMessage.text }}</span>
+      <button class="topbar__system-message-close" type="button" :title="$t('app.dismiss')" @click="emit('dismiss:systemMessage', latestSystemMessage.id)">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
 
-      <button class="icon-btn" type="button" :title="$t('topbar.providers')" @click.stop="openProviders">
+     <div class="topbar__right">
+       <span v-if="usingFallbackData" class="status-chip status-chip--muted">{{ $t('app.usingFallback') }}</span>
+
+       <!-- Workspace path display -->
+       <span v-if="workspacePath" class="topbar__path" :title="workspacePath">
+         📁 {{ workspacePath.split('/').pop() }}
+       </span>
+
+        <!-- Restoration status (loading only; success/error shown in system message bar) -->
+        <span v-if="isRestoringWorkspace" class="status-chip status-chip--loading">
+          {{ $t('workspace.restoring') }}
+        </span>
+
+       <button class="icon-btn" type="button" :title="$t('topbar.providers')" @click.stop="openProviders">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -178,14 +275,11 @@ function selectFolder() {
       <div v-if="showSettings" class="topbar-dropdown" @click.stop>
         <label class="dropdown-field">
           <span>{{ $t('topbar.locale') }}</span>
-          <select
-            :value="selectedLocale"
-            @change="handleLocaleChange"
-          >
-            <option v-for="locale in locales" :key="locale.code" :value="locale.code">
-              {{ locale.label }}
-            </option>
-          </select>
+          <CustomSelect
+            :model-value="selectedLocale"
+            :options="locales.map(l => ({ value: l.code, label: l.label }))"
+            @update:model-value="onLocaleChange"
+          />
         </label>
 
         <button class="dropdown-folder-btn" type="button" @click="openFolderPicker">
@@ -221,16 +315,59 @@ function selectFolder() {
 
       <div v-if="showProviders" class="topbar-dropdown topbar-dropdown--wide" @click.stop>
         <p class="dropdown-title">{{ $t('topbar.providers') }}</p>
+        <div v-if="storageEncrypted" class="dropdown-notice">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          {{ $t('topbar.encryptedStorage') }}
+        </div>
         <label v-for="entry in providerKeys" :key="entry.providerId" class="dropdown-field">
           <span>{{ entry.label }}</span>
-          <input
-            v-model="entry.value"
-            type="password"
-            :placeholder="entry.envKey"
-            class="dropdown-input"
-          />
+          <div class="dropdown-field-row">
+            <input
+              v-model="entry.value"
+              type="password"
+              :placeholder="entry.envKey"
+              class="dropdown-input"
+            />
+            <button
+              v-if="entry.value.trim()"
+              class="dropdown-vault-btn"
+              type="button"
+              :title="$t('topbar.vaultRegister')"
+              @click="registerToVault(entry.providerId, entry.value.trim())"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            </button>
+          </div>
         </label>
-        <button class="dropdown-save-btn" type="button" @click="saveProviderKeys">{{ $t('app.save') }}</button>
+        <button class="dropdown-save-btn" type="button" @click="saveProviderKeysToStorage">{{ $t('app.save') }}</button>
+
+        <div class="dropdown-divider"></div>
+
+        <p class="dropdown-title dropdown-title--sub">{{ $t('topbar.vault') }}</p>
+        <p class="dropdown-hint">{{ $t('topbar.vaultDesc') }}</p>
+        <div v-if="vaultLoading" class="dropdown-loading">{{ $t('app.loading') }}</div>
+        <div v-else-if="vaultKeys.length === 0" class="dropdown-hint">{{ $t('topbar.vaultEmpty') }}</div>
+        <div v-else class="vault-key-list">
+          <div v-for="vk in vaultKeys" :key="vk.keyRef" class="vault-key-item">
+            <div class="vault-key-info">
+              <span class="vault-key-provider">{{ vk.providerId }}</span>
+              <span class="vault-key-ref">{{ vk.keyRef }}</span>
+              <span v-if="vk.lastUsedAt" class="vault-key-time">{{ formatVaultTime(vk.lastUsedAt) }}</span>
+            </div>
+            <button class="vault-key-remove" type="button" :title="$t('topbar.vaultRemove')" @click="removeFromVault(vk.keyRef)">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -241,19 +378,19 @@ function selectFolder() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: auto;
+  height: auto;
   padding: 0;
   border: none;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(237, 243, 255, 0.7);
+  border-radius: 0;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.55);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: transparent;
   color: #edf3ff;
 }
 
@@ -325,15 +462,174 @@ function selectFolder() {
   letter-spacing: 0.05em;
 }
 
-.dropdown-field select,
 .dropdown-input {
-  padding: 0.3rem 0.5rem;
-  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
   font-size: 0.78rem;
-  border: 1px solid rgba(146, 169, 214, 0.2);
-  background: rgba(7, 17, 28, 0.8);
+  border: 1px solid rgba(146, 169, 214, 0.18);
+  background-color: rgba(12, 20, 36, 0.72);
   color: #edf3ff;
   width: 100%;
+}
+
+.dropdown-field select:hover {
+  border-color: rgba(146, 169, 214, 0.32);
+  background-color: rgba(16, 26, 44, 0.78);
+}
+
+.dropdown-field select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--provider-accent) 50%, rgba(146, 169, 214, 0.3));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--provider-accent) 12%, transparent);
+  background-color: rgba(16, 26, 44, 0.82);
+}
+
+.dropdown-field select option,
+.dropdown-field select optgroup {
+  background-color: #0d1624;
+  color: #edf3ff;
+}
+
+.dropdown-field select option:checked,
+.dropdown-field select option[selected] {
+  background-color: color-mix(in srgb, var(--provider-accent) 25%, #0d1624);
+  color: #edf3ff;
+}
+
+.dropdown-field select option:hover {
+  background-color: color-mix(in srgb, var(--provider-accent) 40%, #0d1624);
+  color: #edf3ff;
+}
+
+.dropdown-input {
+  padding: 0.35rem 0.55rem;
+  background-image: none;
+}
+
+.dropdown-field-row {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.dropdown-field-row .dropdown-input {
+  flex: 1;
+}
+
+.dropdown-vault-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(146, 169, 214, 0.2);
+  border-radius: 6px;
+  background: rgba(7, 17, 28, 0.8);
+  color: rgba(237, 243, 255, 0.5);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.dropdown-vault-btn:hover {
+  background: rgba(100, 140, 255, 0.2);
+  color: #8da6ff;
+}
+
+.dropdown-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(40, 190, 120, 0.1);
+  color: #4ade80;
+  font-size: 0.68rem;
+}
+
+.dropdown-divider {
+  height: 1px;
+  margin: 0.3rem 0;
+  background: rgba(146, 169, 214, 0.15);
+}
+
+.dropdown-title--sub {
+  margin-top: 0.2rem;
+}
+
+.dropdown-hint {
+  margin: 0 0 0.3rem;
+  font-size: 0.65rem;
+  color: rgba(237, 243, 255, 0.4);
+  line-height: 1.4;
+}
+
+.vault-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.vault-key-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(7, 17, 28, 0.6);
+}
+
+.vault-key-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.vault-key-provider {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(237, 243, 255, 0.7);
+}
+
+.vault-key-ref {
+  font-size: 0.6rem;
+  font-family: monospace;
+  color: rgba(237, 243, 255, 0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-key-time {
+  font-size: 0.58rem;
+  color: rgba(237, 243, 255, 0.3);
+}
+
+.vault-key-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.vault-key-remove:hover {
+  background: rgba(240, 80, 80, 0.15);
+  color: #f87171;
 }
 
 .dropdown-save-btn {
@@ -422,5 +718,114 @@ function selectFolder() {
 .dir-item--back {
   color: rgba(237, 243, 255, 0.5);
   border-bottom: 1px solid rgba(146, 169, 214, 0.08);
+}
+
+.topbar__path {
+  font-size: 0.68rem;
+  color: rgba(237, 237, 255, 0.5);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-chip--loading {
+  background: rgba(100, 140, 255, 0.15);
+  color: #8da6ff;
+}
+
+.status-chip--success {
+  background: rgba(40, 190, 120, 0.15);
+  color: #4ade80;
+}
+
+.status-chip--error {
+  background: rgba(240, 80, 80, 0.15);
+  color: #f87171;
+}
+
+/* ─── System Message Bar ───────────────────────────────────── */
+
+.topbar__system-message {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 360px;
+  margin: 0 0.5rem 0 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: sysmsg-fade-in 0.2s ease-out;
+}
+
+@keyframes sysmsg-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.topbar__system-message--info {
+  background: rgba(100, 140, 255, 0.08);
+  border-color: rgba(100, 140, 255, 0.18);
+  color: #b8c8f8;
+}
+
+.topbar__system-message--success {
+  background: rgba(40, 190, 120, 0.08);
+  border-color: rgba(40, 190, 120, 0.18);
+  color: #6de8a8;
+}
+
+.topbar__system-message--warning {
+  background: rgba(240, 180, 60, 0.08);
+  border-color: rgba(240, 180, 60, 0.18);
+  color: #f0c040;
+}
+
+.topbar__system-message--error {
+  background: rgba(240, 80, 80, 0.08);
+  border-color: rgba(240, 80, 80, 0.18);
+  color: #f87171;
+}
+
+.topbar__system-message-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.topbar__system-message-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__system-message-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(237, 243, 255, 0.4);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.topbar__system-message-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #edf3ff;
 }
 </style>

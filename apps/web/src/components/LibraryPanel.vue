@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import type { Artifact, Run, Workspace } from '@imageall/core'
+import { resolveArtifactUri } from '../lib/api'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 defineProps<{
   workspace: Workspace | undefined
@@ -37,10 +41,10 @@ const emit = defineEmits<{
         type="button"
         @click="emit('update:selectedArtifactId', artifact.id)"
       >
-        <img :src="artifact.thumbnailUri ?? artifact.uri" :alt="artifact.title" />
+        <img :src="resolveArtifactUri(artifact.thumbnailUri ?? artifact.uri)" :alt="artifact.title" />
         <div>
           <strong>{{ artifact.title }}</strong>
-          <p>{{ artifact.kind }} · {{ artifact.width }}×{{ artifact.height }}</p>
+          <p>{{ artifact.kind }} · {{ artifact.width > 0 && artifact.height > 0 ? `${artifact.width}×${artifact.height}` : $t('stage.unknownSize') }}</p>
         </div>
       </button>
     </section>

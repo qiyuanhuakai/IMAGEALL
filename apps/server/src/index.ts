@@ -15,7 +15,8 @@ import {
 } from '@imageall/core'
 
 import { createExecutionPlan, takeExecutionPlan } from './plans'
-import { listArtifacts, listRuns, storeArtifact, storeRun, setWorkspaceFolder, getWorkspaceFolder } from './store'
+import { listArtifacts, listRuns, storeArtifact, storeRun, setWorkspaceFolder, getWorkspaceFolder, getWorkspaceStatus, restoreWorkspace } from './store'
+import { storeApiKey, resolveApiKey, removeApiKey, listKeys } from './keyVault'
 
 const port = Number(Bun.env.IMAGEALL_PORT ?? 3001)
 let bootstrap = createDemoBootstrap()
@@ -80,21 +81,85 @@ const app = new Elysia({ prefix: '/api' })
       return { ok: false, message: `Cannot read directory: ${targetPath}` }
     }
   })
-  .get('/serve/**', ({ params }) => {
-    const filePath = resolve('/', (params as { '*': string })['*'])
+  .all('/serve/*', ({ request }) => {
+    const url = new URL(request.url)
+    const prefix = '/api/serve/'
+    const rawPath = decodeURIComponent(url.pathname.slice(prefix.length))
+    const folder = getWorkspaceFolder()
+    const filePath = folder ? resolve(folder, rawPath) : resolve('/', rawPath)
     return Bun.file(filePath)
   })
-  .post('/workspace/folder', ({ body, set }) => {
+  .post('/workspace/folder', async ({ body, set }) => {
     const { path } = body as { path: string }
     if (!path) {
       set.status = 400
       return { ok: false, message: 'Path is required' }
     }
-    setWorkspaceFolder(path)
-    return { ok: true, path }
+    await setWorkspaceFolder(path)
+    try {
+      const wsStatus = await getWorkspaceStatus(path)
+      if (wsStatus.exists) {
+        const restored = await restoreWorkspace(path)
+        refreshBootstrap()
+        return { ok: true, path, restored: true, ...restored }
+      }
+    } catch {}
+    refreshBootstrap()
+    return { ok: true, path, restored: false }
   })
   .get('/workspace/folder', () => {
     return { ok: true, path: getWorkspaceFolder() }
+  })
+  .get('/workspace/status', async ({ query, set }) => {
+    const rawPath = (query.path as string) || ''
+    if (!rawPath) {
+      set.status = 400
+      return { ok: false, message: 'Path is required' }
+    }
+    try {
+      const status = await getWorkspaceStatus(rawPath)
+      return { ok: true, status }
+    } catch (error) {
+      set.status = 500
+      return { ok: false, message: `Failed to get workspace status: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
+  })
+  .get('/workspace/restore', async ({ query, set }) => {
+    const rawPath = (query.path as string) || ''
+    if (!rawPath) {
+      set.status = 400
+      return { ok: false, message: 'Path is required' }
+    }
+    try {
+      const restored = await restoreWorkspace(rawPath)
+      refreshBootstrap()
+      return { ok: true, ...restored }
+    } catch (error) {
+      set.status = 500
+      return { ok: false, message: `Failed to restore workspace: ${error instanceof Error ? error.message : 'Unknown error'}` }
+    }
+  })
+  .post('/keys/register', async ({ body, set }) => {
+    const { providerId, apiKey } = body as { providerId?: string; apiKey?: string }
+
+    if (!providerId || !apiKey) {
+      set.status = 400
+      return { ok: false, message: 'providerId and apiKey are required' }
+    }
+
+    const ref = storeApiKey(providerId, apiKey.trim())
+    return { ok: true, ...ref }
+  })
+  .delete('/keys/:keyRef', ({ params, set }) => {
+    const removed = removeApiKey(params.keyRef)
+    if (!removed) {
+      set.status = 404
+      return { ok: false, message: 'Key not found' }
+    }
+    return { ok: true }
+  })
+  .get('/keys', () => {
+    return { ok: true, keys: listKeys() }
   })
   .get('/bootstrap', () => bootstrap)
   .get('/providers', () => bootstrap.providers)
@@ -208,7 +273,21 @@ const app = new Elysia({ prefix: '/api' })
 
       const provider = providerRegistry.getProviderById(input.providerId)
       const envKey = provider?.auth.envKey
-      const apiKey = input.auth?.apiKey ?? payload.auth?.apiKey ?? (envKey ? Bun.env[envKey] : undefined)
+
+      let apiKey: string | undefined
+
+      if (input.auth?.keyRef) {
+        apiKey = resolveApiKey(input.auth.keyRef)
+      }
+      if (!apiKey && payload.auth?.keyRef) {
+        apiKey = resolveApiKey(payload.auth.keyRef)
+      }
+      if (!apiKey) {
+        apiKey = input.auth?.apiKey ?? payload.auth?.apiKey
+      }
+      if (!apiKey && envKey) {
+        apiKey = Bun.env[envKey]
+      }
 
       if (!apiKey) {
         set.status = 400
@@ -273,14 +352,34 @@ const app = new Elysia({ prefix: '/api' })
                 meta.negativePrompt = input.operation.negativePrompt
               }
 
+              const providerLabel = provider?.label ?? input.providerId
+              const shortRunId = runId.replace('run-', '').slice(0, 6)
+              const timeLabel = new Date().toISOString().slice(11, 16)
+              const uniqueTitle = `${providerLabel} ${input.operation.kind} #${index + 1} — ${shortRunId} ${timeLabel}`
+
+              const aspectRatioSizeMap: Record<string, { width: number; height: number }> = {
+                '1:1': { width: 1024, height: 1024 },
+                '16:9': { width: 1280, height: 720 },
+                '4:3': { width: 1152, height: 864 },
+                '3:2': { width: 1248, height: 832 },
+                '2:3': { width: 832, height: 1248 },
+                '3:4': { width: 864, height: 1152 },
+                '9:16': { width: 720, height: 1280 },
+                '21:9': { width: 1344, height: 576 },
+              }
+              const resolvedSize = input.operation.size
+                ?? (input.operation.aspectRatio ? aspectRatioSizeMap[input.operation.aspectRatio] : undefined)
+              const outputWidth = output.width ?? resolvedSize?.width ?? 0
+              const outputHeight = output.height ?? resolvedSize?.height ?? 0
+
               await storeArtifact({
               id: artifactId,
               workspaceId: 'workspace-demo',
               kind: input.operation.kind === 'edit' ? 'edited' : 'generated',
-              title: `${input.providerId} ${input.operation.kind} ${index + 1}`,
+              title: uniqueTitle,
               mimeType,
-              width: output.width ?? 0,
-              height: output.height ?? 0,
+              width: outputWidth,
+              height: outputHeight,
               uri,
               createdAt: new Date().toISOString(),
               sourceRunId: runId,
@@ -321,6 +420,13 @@ const app = new Elysia({ prefix: '/api' })
           result,
         }
       } catch (error) {
+        const normalizedError = adaptor.normalizeError(error)
+        const runError: { code?: string; message: string } = {
+          message: normalizedError.message,
+        }
+        if (normalizedError.code !== undefined) {
+          runError.code = normalizedError.code
+        }
         storeRun({
           id: runId,
           workspaceId: 'workspace-demo',
@@ -340,20 +446,17 @@ const app = new Elysia({ prefix: '/api' })
             {
               timestamp: new Date().toISOString(),
               level: 'error',
-              message: error instanceof Error ? error.message : 'Run failed.',
+              message: normalizedError.message,
             },
           ],
-          error: {
-            code: 'EXECUTION_ERROR',
-            message: error instanceof Error ? error.message : 'Run failed.',
-          },
+          error: runError,
         })
         refreshBootstrap()
 
         set.status = 502
         return {
           ok: false,
-          error: adaptor.normalizeError(error),
+          error: normalizedError,
         }
       }
     }
@@ -371,7 +474,18 @@ const app = new Elysia({ prefix: '/api' })
 
     const provider = providerRegistry.getProviderById(input.providerId)
     const envKey = provider?.auth.envKey
-    const apiKey = input.auth.apiKey ?? (envKey ? Bun.env[envKey] : undefined)
+
+    let apiKey: string | undefined
+
+    if (input.auth?.keyRef) {
+      apiKey = resolveApiKey(input.auth.keyRef)
+    }
+    if (!apiKey) {
+      apiKey = input.auth.apiKey
+    }
+    if (!apiKey && envKey) {
+      apiKey = Bun.env[envKey]
+    }
 
     if (!apiKey) {
       set.status = 400

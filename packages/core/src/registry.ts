@@ -1,10 +1,10 @@
-import type { ProviderManifest, ProviderModelManifest, ProviderOptionDefinition } from './domain'
+import type { OperationKind, ProviderManifest, ProviderModelManifest, ProviderOptionDefinition } from './domain'
 
 export interface ProviderRegistry {
   listProviders(): ProviderManifest[]
   getProviderById(providerId: string): ProviderManifest | undefined
   getModelById(providerId: string, modelId: string): ProviderModelManifest | undefined
-  getProviderOptions(providerId: string, modelId?: string): ProviderOptionDefinition[]
+  getProviderOptions(providerId: string, modelId?: string, operationKind?: OperationKind): ProviderOptionDefinition[]
 }
 
 export function createProviderRegistry(providers: ProviderManifest[]): ProviderRegistry {
@@ -20,37 +20,31 @@ export function createProviderRegistry(providers: ProviderManifest[]): ProviderR
         .find((provider) => provider.id === providerId)
         ?.models.find((model) => model.id === modelId)
     },
-    getProviderOptions(providerId, modelId) {
+    getProviderOptions(providerId, modelId, operationKind) {
       const provider = providers.find((entry) => entry.id === providerId)
       if (!provider) {
         return []
       }
 
-      return provider.providerOptions.filter((option) => {
-        if (!option.appliesToModels || option.appliesToModels.length === 0) {
-          return true
-        }
-
-        if (!modelId) {
-          return false
-        }
-
-        return option.appliesToModels.includes(modelId)
-      })
+      return getProviderOptions(provider, modelId, operationKind)
     },
   }
 }
 
-export function getProviderOptions(provider: ProviderManifest, modelId?: string): ProviderOptionDefinition[] {
+export function getProviderOptions(provider: ProviderManifest, modelId?: string, operationKind?: OperationKind): ProviderOptionDefinition[] {
   return provider.providerOptions.filter((option) => {
-    if (!option.appliesToModels || option.appliesToModels.length === 0) {
-      return true
+    if (option.appliesToModels && option.appliesToModels.length > 0) {
+      if (!modelId || !option.appliesToModels.includes(modelId)) {
+        return false
+      }
     }
 
-    if (!modelId) {
-      return false
+    if (option.appliesToOperations && option.appliesToOperations.length > 0) {
+      if (!operationKind || !option.appliesToOperations.includes(operationKind)) {
+        return false
+      }
     }
 
-    return option.appliesToModels.includes(modelId)
+    return true
   })
 }

@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { OperationKind, PreparedRunPlan, ProviderModelManifest, ProviderOptionDefinition } from '@imageall/core'
+import { useI18n } from 'vue-i18n'
+import CustomSelect from './CustomSelect.vue'
 
-defineProps<{
+const props = defineProps<{
   selectedOperation: OperationKind
   prompt: string
   negativePrompt: string
@@ -11,9 +14,13 @@ defineProps<{
   seed: number
   sourceImageTitle: string | undefined
   sourceImageFilename: string | undefined
+  styleReferenceImageFilename: string | undefined
   activeModel: ProviderModelManifest | undefined
   availableSizePresets: Array<{ width: number; height: number }>
   supportsCustomSize: boolean
+  supportsMultiImage: boolean
+  numImages: number
+  maxImages: number
   providerOptions: Record<string, string | number | boolean>
   providerOptionDefinitions: ProviderOptionDefinition[]
   apiKey: string
@@ -24,8 +31,6 @@ defineProps<{
   isExecutingRun: boolean
 }>()
 
-import { useI18n } from 'vue-i18n'
-
 const emit = defineEmits([
   'update:selectedOperation',
   'update:prompt',
@@ -34,10 +39,13 @@ const emit = defineEmits([
   'update:width',
   'update:height',
   'update:seed',
+  'update:numImages',
   'apply:sizePreset',
   'update:providerOption',
-  'update:apiKey',
   'update:sourceImageFile',
+  'update:styleReferenceImageFile',
+  'update:numImages',
+  'update:apiKey',
   'run',
 ])
 
@@ -58,7 +66,18 @@ function onSizeSelect(event: Event) {
   emit('update:height', h)
 }
 
-const operations: OperationKind[] = ['generate', 'edit', 'upscale']
+function onSizeSelectString(value: string) {
+  const [w, h] = value.split('x').map(Number)
+  emit('update:width', w)
+  emit('update:height', h)
+}
+
+const allOperations: OperationKind[] = ['generate', 'edit', 'image2image', 'upscale']
+
+const availableOperations = computed(() => {
+  const supported = props.activeModel?.operations ?? allOperations
+  return allOperations.filter((op) => supported.includes(op))
+})
 </script>
 
 <template>
@@ -76,7 +95,7 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
       </div>
       <div class="pill-row">
         <button
-          v-for="operation in operations"
+          v-for="operation in availableOperations"
           :key="operation"
           class="pill-button"
           :class="{ 'pill-button--active': operation === selectedOperation }"
@@ -121,20 +140,12 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
 
       <label class="field">
         <span>{{ $t('inspector.size') }}</span>
-        <select
-          :value="`${width}x${height}`"
-          @change="onSizeSelect"
-          class="bb-select"
-        >
-          <option
-            v-for="preset in availableSizePresets"
-            :key="`${preset.width}x${preset.height}`"
-            :value="`${preset.width}x${preset.height}`"
-          >
-            {{ preset.width }} × {{ preset.height }}
-          </option>
-        </select>
-        <small v-if="aspectRatio">{{ $t('inspector.aspectRatio') }}: {{ aspectRatio }}</small>
+        <CustomSelect
+          :model-value="`${width}x${height}`"
+          :options="availableSizePresets.map(p => ({ value: `${p.width}x${p.height}`, label: `${p.width} × ${p.height}` }))"
+          @update:model-value="onSizeSelectString($event)"
+        />
+        <small v-if="width && height">{{ width }} × {{ height }}{{ aspectRatio ? ` (${aspectRatio})` : '' }}</small>
       </label>
 
       <div v-if="supportsCustomSize" class="field-grid">
@@ -148,30 +159,44 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
         </label>
       </div>
 
-      <label class="field field--full">
-        <span>{{ $t('inspector.seed') }}</span>
-        <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
-      </label>
+      <div class="field-grid">
+        <label class="field">
+          <span>{{ $t('inspector.seed') }}</span>
+          <div class="seed-input-row">
+            <input :value="seed" type="number" @input="emit('update:seed', Number(($event.target as HTMLInputElement).value))" />
+            <button class="seed-dice-btn" type="button" :title="$t('inspector.randomSeed')" @click="emit('update:seed', Math.floor(Math.random() * 2147483647))">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="16" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="16" r="1.5" fill="currentColor"/><circle cx="16" cy="16" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+            </button>
+          </div>
+        </label>
 
-      <div class="source-chip">
-        <span>{{ $t('inspector.sourceImage') }}</span>
-        <strong>{{ sourceImageTitle ?? '—' }}</strong>
+        <label v-if="supportsMultiImage" class="field">
+          <span>{{ $t('inspector.numImages') }}</span>
+          <input :value="numImages" type="number" min="1" :max="maxImages" @input="emit('update:numImages', Number(($event.target as HTMLInputElement).value))" />
+        </label>
       </div>
 
-      <label v-if="selectedOperation === 'edit'" class="field">
-        <span>{{ $t('inspector.uploadSource') }}</span>
-        <input
-          accept="image/png,image/jpeg,image/webp"
-          type="file"
-          @change="
-            ($event) => {
-              const file = ($event.target as HTMLInputElement).files?.[0]
-              if (file) emit('update:sourceImageFile', file)
-            }
-          "
-        />
-        <small>{{ sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
-      </label>
+      <template v-if="selectedOperation === 'edit' || selectedOperation === 'image2image' || selectedOperation === 'upscale'">
+        <div class="source-chip">
+          <span>{{ selectedOperation === 'image2image' ? $t('inspector.referenceImage') : $t('inspector.sourceImage') }}</span>
+          <strong>{{ sourceImageTitle ?? '—' }}</strong>
+        </div>
+
+        <label v-if="selectedOperation === 'edit' || selectedOperation === 'image2image'" class="field">
+          <span>{{ selectedOperation === 'image2image' ? $t('inspector.uploadReference') : $t('inspector.uploadSource') }}</span>
+          <input
+            accept="image/png,image/jpeg,image/webp"
+            type="file"
+            @change="
+              ($event) => {
+                const file = ($event.target as HTMLInputElement).files?.[0]
+                if (file) emit('update:sourceImageFile', file)
+              }
+            "
+          />
+          <small>{{ sourceImageFilename ?? $t('inspector.uploadHint') }}</small>
+        </label>
+      </template>
     </section>
 
     <section class="inspector-section">
@@ -182,15 +207,12 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
       <label v-for="option in providerOptionDefinitions" :key="option.id" class="field">
         <span>{{ optionLabel(option.id) }}</span>
 
-        <select
+        <CustomSelect
           v-if="option.control === 'select'"
-          :value="providerOptions[option.id]"
-          @change="emit('update:providerOption', { id: option.id, value: ($event.target as HTMLSelectElement).value })"
-        >
-          <option v-for="selectOption in option.options" :key="selectOption.value" :value="selectOption.value">
-            {{ selectOption.label }}
-          </option>
-        </select>
+          :model-value="String(providerOptions[option.id] ?? '')"
+          :options="(option.options ?? []).map(o => ({ value: o.value, label: t(`providerOptions.${option.id}${o.value}`, o.label) }))"
+          @update:model-value="emit('update:providerOption', { id: option.id, value: $event })"
+        />
 
         <input
           v-else-if="option.control === 'number'"
@@ -202,6 +224,19 @@ const operations: OperationKind[] = ['generate', 'edit', 'upscale']
           @input="emit('update:providerOption', { id: option.id, value: Number(($event.target as HTMLInputElement).value) })"
         />
 
+        <template v-else-if="option.control === 'text' && option.id === 'styleReferenceSource'">
+          <input
+            accept="image/png,image/jpeg,image/webp"
+            type="file"
+            @change="
+              ($event) => {
+                const file = ($event.target as HTMLInputElement).files?.[0]
+                if (file) emit('update:styleReferenceImageFile', file)
+              }
+            "
+          />
+          <small>{{ props.styleReferenceImageFilename ?? $t('inspector.uploadHint') }}</small>
+        </template>
         <input
           v-else-if="option.control === 'text'"
           :value="String(providerOptions[option.id] ?? '')"

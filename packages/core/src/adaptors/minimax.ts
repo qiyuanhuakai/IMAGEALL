@@ -25,8 +25,14 @@ import {
 
 const minimaxManifest = requireProviderManifest('minimax', providerManifests)
 
-const MINIMAX_BASE_URL = 'https://api.minimax.io'
-const MINIMAX_ALLOWED_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9']
+const MINIMAX_BASE_URL = 'https://api.minimaxi.com'
+const MINIMAX_IMAGE_01_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9']
+const MINIMAX_IMAGE_01_LIVE_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16']
+const MINIMAX_ALLOWED_STYLE_TYPES = ['漫画', '元气', '中世纪', '水彩']
+
+function getMiniMaxAllowedAspectRatios(modelId: string): string[] {
+  return modelId === 'image-01-live' ? MINIMAX_IMAGE_01_LIVE_ASPECT_RATIOS : MINIMAX_IMAGE_01_ASPECT_RATIOS
+}
 
 function isValidMiniMaxImageInput(input: ImageInputSource): boolean {
   if (input.kind === 'url') {
@@ -83,8 +89,8 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
       errors.push('MiniMax prompts must be 1500 characters or fewer.')
     }
 
-    if (input.operation.aspectRatio && !MINIMAX_ALLOWED_ASPECT_RATIOS.includes(input.operation.aspectRatio)) {
-      errors.push(`Unsupported MiniMax aspect ratio: ${input.operation.aspectRatio}`)
+    if (input.operation.aspectRatio && !getMiniMaxAllowedAspectRatios(input.modelId).includes(input.operation.aspectRatio)) {
+      errors.push(`Unsupported MiniMax aspect ratio for ${input.modelId}: ${input.operation.aspectRatio}`)
     }
 
     if (input.operation.numImages && (input.operation.numImages < 1 || input.operation.numImages > 9)) {
@@ -114,6 +120,29 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
     const promptOptimizer = input.providerOptions?.promptOptimizer
     if (promptOptimizer !== undefined && typeof promptOptimizer !== 'boolean') {
       errors.push('MiniMax promptOptimizer must be a boolean when provided.')
+    }
+
+    const aigcWatermark = input.providerOptions?.aigcWatermark
+    if (aigcWatermark !== undefined && typeof aigcWatermark !== 'boolean') {
+      errors.push('MiniMax aigcWatermark must be a boolean when provided.')
+    }
+
+    const styleType = input.providerOptions?.styleType
+    if (styleType !== undefined) {
+      if (input.modelId !== 'image-01-live') {
+        errors.push('MiniMax styleType is only supported for image-01-live.')
+      } else if (typeof styleType !== 'string' || !MINIMAX_ALLOWED_STYLE_TYPES.includes(styleType)) {
+        errors.push(`MiniMax styleType must be one of: ${MINIMAX_ALLOWED_STYLE_TYPES.join(', ')}.`)
+      }
+    }
+
+    const styleWeight = input.providerOptions?.styleWeight
+    if (styleWeight !== undefined) {
+      if (input.modelId !== 'image-01-live') {
+        errors.push('MiniMax styleWeight is only supported for image-01-live.')
+      } else if (typeof styleWeight !== 'number' || styleWeight <= 0 || styleWeight > 1) {
+        errors.push('MiniMax styleWeight must be a number in (0, 1].')
+      }
     }
 
     if (input.operation.kind === 'edit') {
@@ -150,6 +179,7 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
       prompt,
       response_format: input.operation.responseFormat ?? 'url',
       prompt_optimizer: Boolean(input.providerOptions?.promptOptimizer),
+      aigc_watermark: Boolean(input.providerOptions?.aigcWatermark),
     }
 
     if (input.operation.aspectRatio) {
@@ -167,6 +197,13 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
 
     if (input.operation.numImages !== undefined) {
       body.n = input.operation.numImages
+    }
+
+    if (input.modelId === 'image-01-live' && input.providerOptions?.styleType) {
+      body.style = {
+        style_type: input.providerOptions.styleType,
+        style_weight: input.providerOptions?.styleWeight ?? 0.8,
+      }
     }
 
     if (input.operation.kind === 'edit') {
@@ -199,13 +236,20 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
 
   async execute(input: UnifiedRunInput): Promise<UnifiedRunResult> {
     const request = await this.buildRequest(input)
-    const response = await fetch(request.url, {
-      method: request.method,
-      ...(request.headers ? { headers: request.headers } : {}),
-      body: JSON.stringify(request.body),
-    })
+    let response: Response
 
-    const payload = (await response.json()) as {
+    try {
+      response = await fetch(request.url, {
+        method: request.method,
+        ...(request.headers ? { headers: request.headers } : {}),
+        body: JSON.stringify(request.body),
+      })
+    } catch (networkError) {
+      throw this.normalizeError({ response: undefined, payload: undefined, networkError })
+    }
+
+    const contentType = response.headers.get('content-type') ?? ''
+    let payload: {
       id?: string
       data?: {
         image_urls?: string[]
@@ -219,36 +263,78 @@ export class MiniMaxAdaptor implements ImageProviderAdaptor {
         status_code?: number
         status_msg?: string
       }
+    } | undefined
+
+    if (contentType.includes('application/json')) {
+      try {
+        payload = (await response.json()) as typeof payload
+      } catch {
+        // Non-JSON or malformed response — error will be reported from response status below
+      }
     }
 
-    if (!response.ok || payload.base_resp?.status_code !== 0) {
+    if (!response.ok || (payload?.base_resp?.status_code !== undefined && payload.base_resp.status_code !== 0)) {
       throw this.normalizeError({ response, payload })
     }
 
+    const successCount = payload?.metadata?.success_count
+    const failedCount = payload?.metadata?.failed_count
+
     const outputs = [
-      ...(payload.data?.image_urls ?? []).map((uri) => ({ uri })),
-      ...(payload.data?.image_base64 ?? []).map((base64) => ({ base64 })),
+      ...(payload?.data?.image_urls ?? []).map((uri) => ({
+        uri,
+        ...(successCount !== undefined ? { successCount } : {}),
+        ...(failedCount !== undefined ? { failedCount } : {}),
+      })),
+      ...(payload?.data?.image_base64 ?? []).map((base64) => ({
+        base64,
+        ...(successCount !== undefined ? { successCount } : {}),
+        ...(failedCount !== undefined ? { failedCount } : {}),
+      })),
     ]
 
     return {
       outputs,
-      raw: payload,
+      raw: {
+        ...payload,
+        id: payload?.id,
+      },
     }
   }
 
   normalizeError(error: unknown): NormalizedProviderError {
     if (typeof error === 'object' && error !== null && 'payload' in error) {
-      const payload = (error as { payload?: { base_resp?: { status_code?: number; status_msg?: string } } }).payload
-      const response = (error as { response?: Response }).response
+      const err = error as {
+        payload?: { base_resp?: { status_code?: number; status_msg?: string } }
+        response?: Response
+        networkError?: unknown
+      }
 
-      return {
-        message: payload?.base_resp?.status_msg ?? 'MiniMax request failed.',
-        ...(payload?.base_resp?.status_code !== undefined
-          ? { code: payload.base_resp.status_code.toString() }
-          : {}),
-        ...(response?.status !== undefined ? { status: response.status } : {}),
+      if (err.networkError) {
+        const msg = err.networkError instanceof Error ? err.networkError.message : 'Network error'
+        return { code: 'NETWORK_ERROR', message: `MiniMax network error: ${msg}`, raw: error }
+      }
+
+      const httpStatus = err.response?.status
+      const statusCode = err.payload?.base_resp?.status_code
+      const statusMsg = err.payload?.base_resp?.status_msg
+
+      const result: { code?: string; status?: number; message: string; raw?: unknown } = {
+        message: statusMsg ?? (httpStatus ? `MiniMax request failed (HTTP ${httpStatus})` : 'MiniMax request failed.'),
         raw: error,
       }
+
+      if (statusCode !== undefined) {
+        result.code = statusCode.toString()
+      } else if (httpStatus !== undefined) {
+        result.code = `HTTP_${httpStatus}`
+      }
+
+      if (httpStatus !== undefined) {
+        result.status = httpStatus
+      }
+
+      return result
     }
 
     return normalizeUnknownError(error, 'MiniMax request failed.')

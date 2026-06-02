@@ -59,10 +59,16 @@ function stopResize() {
       :selected-workspace-id="workbench.selectedWorkspaceId.value"
       :selected-locale="workbench.selectedLocale.value"
       :using-fallback-data="workbench.isUsingFallbackData.value"
+      :is-restoring-workspace="workbench.isRestoringWorkspace.value"
+      :workspace-path="workbench.workspacePath.value"
+      :system-messages="workbench.systemMessages.value"
+      :latest-system-message="workbench.systemMessages.value[0] ?? null"
       @update:selected-locale="workbench.selectedLocale.value = $event"
       @update:selected-workspace-id="workbench.selectedWorkspaceId.value = $event"
       @update:provider-keys="workbench.updateProviderKeys($event)"
       @select:workspace-folder="workbench.setWorkspaceFolder($event)"
+      @dismiss:system-message="workbench.dismissSystemMessage($event)"
+      @clear:system-messages="workbench.clearSystemMessages()"
     />
 
     <main class="workbench-grid">
@@ -78,6 +84,8 @@ function stopResize() {
       <div class="right-panel">
         <PreviewStage
           :selected-artifact="workbench.selectedArtifact.value"
+          :fallback-width="workbench.width.value"
+          :fallback-height="workbench.height.value"
         />
 
         <BottomBar
@@ -97,12 +105,17 @@ function stopResize() {
           :width="workbench.width.value"
           :height="workbench.height.value"
           :seed="workbench.seed.value"
-          :source-image-title="workbench.selectedArtifact.value?.title"
+          :source-image-title="workbench.sourceImageFilename.value ?? workbench.selectedArtifact.value?.title"
           :source-image-filename="workbench.sourceImageFilename.value"
+          :style-reference-image-filename="workbench.styleReferenceImageFilename.value"
           :active-model="workbench.activeModel.value"
           :available-size-presets="workbench.availableSizePresets.value"
+          :supported-aspect-ratios="workbench.supportedAspectRatios.value"
           :supports-custom-size="workbench.supportsCustomSize.value ?? false"
           :supports-negative-prompt="workbench.supportsNegativePrompt.value !== false"
+          :supports-multi-image="workbench.supportsMultiImage.value !== false"
+          :num-images="workbench.numImages.value"
+          :max-images="workbench.maxImages.value"
           :provider-options="workbench.providerOptions.value"
           :provider-option-definitions="workbench.currentProviderOptions.value"
           :latest-plan="workbench.latestPlan.value"
@@ -121,8 +134,10 @@ function stopResize() {
           @update:width="workbench.width.value = $event"
           @update:height="workbench.height.value = $event"
           @update:seed="workbench.seed.value = $event"
+          @update:num-images="workbench.numImages.value = $event"
           @apply:size-preset="({ width, height }) => { workbench.width.value = width; workbench.height.value = height }"
           @update:source-image-file="workbench.updateSourceImage($event)"
+          @update:style-reference-image-file="workbench.updateStyleReferenceImage($event)"
           @update:provider-option="workbench.providerOptions.value[$event.id] = $event.value"
           @run="workbench.runPreparedExecution()"
         />

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import {
   type ImageInputSource,
@@ -15,7 +15,8 @@ import {
   type WorkbenchBootstrap,
 } from '@imageall/core'
 
-import { executePreparedRun, fetchBootstrap, prepareRun } from '../lib/api'
+import { checkWorkspaceStatus, executePreparedRun, fetchBootstrap, prepareRun, restoreWorkspace } from '../lib/api'
+import { loadProviderKeys, saveProviderKeys, isSecureStorageAvailable } from '../lib/secureStorage'
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b)
@@ -58,18 +59,58 @@ export function useWorkbench() {
   const providerOptions = ref<Record<string, ProviderOptionValue>>({})
   const apiKey = ref('')
   const providerKeys = ref<Record<string, string>>({})
-  try {
-    const raw = localStorage.getItem('imageall_provider_keys')
-    if (raw) providerKeys.value = JSON.parse(raw)
-  } catch { /* ignore */ }
+  const secureStorageAvailable = isSecureStorageAvailable()
+
+  loadProviderKeys()
+    .then((keys) => { providerKeys.value = keys })
+    .catch(() => { /* graceful degradation: empty keys */ })
+
   const sourceImageDataUrl = ref('')
   const sourceImageFilename = ref('source.png')
+  const styleReferenceImageDataUrl = ref('')
+  const styleReferenceImageFilename = ref('')
   const latestPlan = ref<PreparedRunPlan>()
   const lastRunError = ref<string>()
   const lastRunMessage = ref<string>()
   const isPreparingRun = ref(false)
   const isExecutingRun = ref(false)
   const liveOutputs = ref<Array<{ uri?: string; base64?: string; mimeType?: string; seed?: number }>>([])
+
+  type SystemMessageLevel = 'info' | 'warning' | 'error' | 'success'
+
+  interface SystemMessage {
+    id: string
+    level: SystemMessageLevel
+    text: string
+    timestamp: string
+    source?: string
+  }
+
+  const systemMessages = ref<SystemMessage[]>([])
+  let messageIdCounter = 0
+
+  function addSystemMessage(level: SystemMessageLevel, text: string, source?: string) {
+    messageIdCounter++
+    const id = `sysmsg-${messageIdCounter}-${Date.now()}`
+    const msg: SystemMessage = { id, level, text, timestamp: new Date().toISOString() }
+    if (source !== undefined) msg.source = source
+    systemMessages.value = [msg]
+  }
+
+  function clearSystemMessages() {
+    systemMessages.value = []
+  }
+
+  function dismissSystemMessage(id: string) {
+    systemMessages.value = systemMessages.value.filter(m => m.id !== id)
+  }
+
+  const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
+
+  const isRestoringWorkspace = ref(false)
+  const restorationStatus = ref<string>()
+  const restorationError = ref<string>()
+  const workspacePath = ref<string>(savedWorkspaceFolder ?? '')
 
   const registry = computed(() => createProviderRegistry(bootstrap.value.providers))
   const locales = computed(() => bootstrap.value.locales)
@@ -88,18 +129,26 @@ export function useWorkbench() {
       .filter((artifact): artifact is Artifact => Boolean(artifact))
   })
   const recentOutputArtifacts = computed(() => artifacts.value.filter((artifact) => artifact.kind !== 'input').slice(-3).reverse())
-  const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value) : []))
+  const currentProviderOptions = computed(() => (activeProvider.value ? getProviderOptions(activeProvider.value, selectedModelId.value, selectedOperation.value) : []))
   const availableSizePresets = computed(() => activeModel.value?.constraints?.sizePresets ?? [])
+  const supportedAspectRatios = computed(() => activeModel.value?.constraints?.supportedAspectRatios ?? [])
   const supportsCustomSize = computed(() => {
     const provider = activeProvider.value
     if (!provider) return true
-    return provider.capabilities.supportsCustomSize === true
+    if (provider.capabilities.supportsCustomSize !== true) return false
+    return activeModel.value?.constraints?.supportsCustomSize !== false
   })
   const supportsNegativePrompt = computed(() => {
     const provider = activeProvider.value
     if (!provider) return true
     return provider.capabilities.supportsNegativePrompt !== false
   })
+  const supportsMultiImage = computed(() => {
+    const provider = activeProvider.value
+    if (!provider) return true
+    return provider.capabilities.supportsMultiImage !== false
+  })
+  const maxImages = computed(() => activeModel.value?.constraints?.maxImages ?? 9)
   const selectedSourceImageInput = computed<ImageInputSource[] | undefined>(() => {
     if (!sourceImageDataUrl.value.trim()) {
       return undefined
@@ -138,20 +187,37 @@ export function useWorkbench() {
   )
 
   function buildOperationSpec(): OperationSpec {
+    const supportsAspectRatio = activeProvider.value?.capabilities.supportsAspectRatio !== false
+      && activeModel.value?.constraints?.supportedAspectRatios?.length
     const base = {
       prompt: prompt.value,
       seed: seed.value,
       numImages: numImages.value,
       responseFormat: 'base64' as const,
       ...(negativePrompt.value ? { negativePrompt: negativePrompt.value } : {}),
-      ...(aspectRatio.value ? { aspectRatio: aspectRatio.value } : {}),
+      ...(supportsAspectRatio && aspectRatio.value ? { aspectRatio: aspectRatio.value } : {}),
     }
 
     if (selectedOperation.value === 'edit') {
+      const modelConstraints = activeModel.value?.constraints
+      const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
+        && modelConstraints?.supportsCustomSize !== false
+      const hasAspectRatios = modelConstraints?.supportedAspectRatios?.length
+
       return {
         kind: 'edit',
         sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
-        ...(selectedModelId.value === 'step-image-edit-2' ? {} : { size: { width: width.value, height: height.value } }),
+        ...(canCustomSize || !hasAspectRatios
+          ? { size: { width: width.value, height: height.value } }
+          : {}),
+        ...base,
+      }
+    }
+
+    if (selectedOperation.value === 'image2image') {
+      return {
+        kind: 'image2image',
+        sourceArtifactId: selectedArtifact.value?.id ?? 'live-source',
         ...base,
       }
     }
@@ -165,9 +231,16 @@ export function useWorkbench() {
       }
     }
 
+    const modelConstraints = activeModel.value?.constraints
+    const canCustomSize = activeProvider.value?.capabilities.supportsCustomSize === true
+      && modelConstraints?.supportsCustomSize !== false
+    const hasAspectRatios = modelConstraints?.supportedAspectRatios?.length
+
     return {
       kind: 'generate',
-      size: { width: width.value, height: height.value },
+      ...(canCustomSize || !hasAspectRatios
+        ? { size: { width: width.value, height: height.value } }
+        : {}),
       ...base,
     }
   }
@@ -181,7 +254,7 @@ export function useWorkbench() {
       modelId: selectedModelId.value,
       auth: trimmedApiKey ? { apiKey: trimmedApiKey } : (savedKey ? { apiKey: savedKey } : {}),
       operation: buildOperationSpec(),
-      ...(selectedOperation.value === 'edit' && selectedSourceImageInput.value
+      ...((selectedOperation.value === 'edit' || selectedOperation.value === 'image2image') && selectedSourceImageInput.value
         ? { imageInputs: selectedSourceImageInput.value }
         : {}),
       providerOptions: providerOptions.value,
@@ -198,8 +271,10 @@ export function useWorkbench() {
       const plan = await prepareRun(buildRunInput())
       latestPlan.value = plan
       lastRunMessage.value = `Prepared ${plan.providerId}/${plan.modelId} run plan.`
+      addSystemMessage('info', `Prepared ${plan.providerId}/${plan.modelId} run plan.`, 'run')
     } catch (runError) {
       lastRunError.value = runError instanceof Error ? runError.message : 'Failed to prepare run'
+      addSystemMessage('error', lastRunError.value!, 'run')
       return
     } finally {
       isPreparingRun.value = false
@@ -229,6 +304,7 @@ export function useWorkbench() {
 
       liveOutputs.value = result.outputs
       lastRunMessage.value = `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`
+      addSystemMessage('success', `Received ${result.outputs.length} live output(s) from ${selectedProviderId.value}.`, 'run')
 
       try {
         const fresh = await fetchBootstrap()
@@ -241,6 +317,7 @@ export function useWorkbench() {
       }
     } catch (runError) {
       lastRunError.value = runError instanceof Error ? runError.message : 'Failed to execute run'
+      addSystemMessage('error', lastRunError.value!, 'run')
     } finally {
       isExecutingRun.value = false
     }
@@ -252,6 +329,13 @@ export function useWorkbench() {
     sourceImageFilename.value = file.name
   }
 
+  async function updateStyleReferenceImage(file: File) {
+    const dataUrl = await fileToDataUrl(file)
+    styleReferenceImageDataUrl.value = dataUrl
+    styleReferenceImageFilename.value = file.name
+    providerOptions.value.styleReferenceSource = dataUrl
+  }
+
   function applyProviderDefaults() {
     if (!activeProvider.value || !selectedModelId.value) {
       providerOptions.value = {}
@@ -259,6 +343,15 @@ export function useWorkbench() {
     }
 
     providerOptions.value = normalizeProviderOptions(activeProvider.value, selectedModelId.value)
+
+    const styleRefSource = providerOptions.value.styleReferenceSource
+    if (typeof styleRefSource === 'string' && styleRefSource.trim().length > 0) {
+      styleReferenceImageDataUrl.value = styleRefSource
+      styleReferenceImageFilename.value = 'reference.png'
+    } else {
+      styleReferenceImageDataUrl.value = ''
+      styleReferenceImageFilename.value = ''
+    }
   }
 
   function syncSizeToModelConstraints() {
@@ -291,15 +384,31 @@ export function useWorkbench() {
     }
 
     applyProviderDefaults()
-    syncSizeToModelConstraints()
+    void nextTick(() => syncSizeToModelConstraints())
   })
 
   watch(selectedModelId, () => {
     applyProviderDefaults()
-    syncSizeToModelConstraints()
+    void nextTick(() => syncSizeToModelConstraints())
+
+    const model = activeModel.value
+    if (model && !model.operations.includes(selectedOperation.value)) {
+      selectedOperation.value = model.operations[0] ?? 'generate'
+    }
   })
 
   let aspectRatioTimer: ReturnType<typeof setTimeout> | undefined
+  const aspectRatioSizeMap: Record<string, { width: number; height: number }> = {
+    '1:1': { width: 1024, height: 1024 },
+    '16:9': { width: 1280, height: 720 },
+    '4:3': { width: 1152, height: 864 },
+    '3:2': { width: 1248, height: 832 },
+    '2:3': { width: 832, height: 1248 },
+    '3:4': { width: 864, height: 1152 },
+    '9:16': { width: 720, height: 1280 },
+    '21:9': { width: 1344, height: 576 },
+  }
+
   watch([width, height], () => {
     if (aspectRatioTimer) clearTimeout(aspectRatioTimer)
     aspectRatioTimer = setTimeout(() => {
@@ -307,7 +416,13 @@ export function useWorkbench() {
     }, 300)
   })
 
-  const savedWorkspaceFolder = localStorage.getItem('imageall_workspace_folder')
+  watch(aspectRatio, (ratio) => {
+    const size = aspectRatioSizeMap[ratio]
+    if (size && activeProvider.value?.capabilities.supportsAspectRatio !== false && activeModel.value?.constraints?.supportedAspectRatios?.length) {
+      width.value = size.width
+      height.value = size.height
+    }
+  })
 
   async function loadBootstrap() {
     isLoading.value = true
@@ -324,6 +439,7 @@ export function useWorkbench() {
       isUsingFallbackData.value = false
     } catch (loadError) {
       error.value = loadError instanceof Error ? loadError.message : 'Unknown bootstrap error'
+      addSystemMessage('error', error.value ?? 'Unknown bootstrap error', 'bootstrap')
       bootstrap.value = createDemoBootstrap()
       isUsingFallbackData.value = true
     } finally {
@@ -359,8 +475,11 @@ export function useWorkbench() {
     recentOutputArtifacts,
     currentProviderOptions,
     availableSizePresets,
+    supportedAspectRatios,
     supportsCustomSize,
     supportsNegativePrompt,
+    supportsMultiImage,
+    maxImages,
     selectedWorkspaceId,
     selectedArtifactId,
     selectedOperation,
@@ -379,6 +498,9 @@ export function useWorkbench() {
     apiKey,
     sourceImageDataUrl,
     sourceImageFilename,
+    styleReferenceImageDataUrl,
+    styleReferenceImageFilename,
+    updateStyleReferenceImage,
     latestPlan,
     lastRunError,
     lastRunMessage,
@@ -388,21 +510,113 @@ export function useWorkbench() {
     liveOutputArtifacts,
     runPreparedExecution,
     updateSourceImage,
-    updateProviderKeys: (keys: Record<string, string>) => {
+    updateProviderKeys: async (keys: Record<string, string>) => {
       providerKeys.value = keys
+      if (secureStorageAvailable) {
+        try {
+          await saveProviderKeys(keys)
+        } catch (err) {
+          console.warn('[useWorkbench] Failed to save encrypted keys:', err)
+        }
+      }
     },
     setWorkspaceFolder: async (path: string) => {
       localStorage.setItem('imageall_workspace_folder', path)
+      workspacePath.value = path
+
       const ws = bootstrap.value.workspaces[0]
       if (ws) ws.name = path.split('/').pop() ?? path
+
       try {
-        await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/workspace/folder`, {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+        const response = await fetch(`${apiBaseUrl}/api/workspace/folder`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path }),
         })
-      } catch { /* ignore */ }
+        const data = await response.json()
+
+        if (data.ok && data.restored) {
+          if (data.workspace) {
+            const existingWs = bootstrap.value.workspaces[0]
+            if (existingWs) {
+              existingWs.id = data.workspace.id
+              existingWs.name = data.workspace.name
+              existingWs.locale = data.workspace.locale
+              existingWs.uiState = data.workspace.uiState
+            }
+          }
+          bootstrap.value.artifacts = data.artifacts ?? []
+          bootstrap.value.runs = data.runs ?? []
+          const artifactCount = data.artifacts?.length ?? 0
+          const runCount = data.runs?.length ?? 0
+          if (artifactCount > 0) {
+            selectedArtifactId.value = data.artifacts[0]?.id
+          }
+
+          const warnings = data.warnings?.length ? ` (${data.warnings.length} warnings)` : ''
+          restorationStatus.value = `Restored ${artifactCount} artifacts and ${runCount} runs from workspace${warnings}`
+          addSystemMessage('success', restorationStatus.value, 'workspace')
+        } else if (data.ok) {
+          bootstrap.value.artifacts = []
+          bootstrap.value.runs = []
+        }
+      } catch (error) {
+        restorationError.value = error instanceof Error ? error.message : 'Failed to set workspace folder'
+        addSystemMessage('error', restorationError.value!, 'workspace')
+      }
     },
+    isRestoringWorkspace,
+    restorationStatus,
+    restorationError,
+    workspacePath,
+    attemptWorkspaceRestore,
+    systemMessages,
+    addSystemMessage,
+    clearSystemMessages,
+    dismissSystemMessage,
+  }
+
+  async function attemptWorkspaceRestore(path: string) {
+    isRestoringWorkspace.value = true
+    restorationStatus.value = undefined
+    restorationError.value = undefined
+
+    try {
+      const status = await checkWorkspaceStatus(path)
+      if (status.exists) {
+        const restored = await restoreWorkspace(path)
+
+        bootstrap.value.artifacts = restored.artifacts
+        bootstrap.value.runs = restored.runs
+
+        if (restored.workspace) {
+          const ws = bootstrap.value.workspaces[0]
+          if (ws) {
+            ws.id = restored.workspace.id
+            ws.name = restored.workspace.name
+            ws.locale = restored.workspace.locale
+            ws.uiState = restored.workspace.uiState
+          }
+        }
+
+        if (restored.artifacts.length > 0) {
+          selectedArtifactId.value = restored.artifacts[0]?.id
+        }
+
+        const warnings = restored.warnings.length > 0 ? ` (${restored.warnings.length} warnings)` : ''
+        restorationStatus.value = `Restored ${restored.artifacts.length} artifacts and ${restored.runs.length} runs from workspace${warnings}`
+        addSystemMessage('success', restorationStatus.value, 'workspace')
+      } else {
+        restorationStatus.value = 'No persisted data in this folder'
+        addSystemMessage('info', restorationStatus.value, 'workspace')
+      }
+    } catch (error) {
+      restorationError.value = error instanceof Error ? error.message : 'Failed to restore workspace'
+      addSystemMessage('error', restorationError.value!, 'workspace')
+    } finally {
+      isRestoringWorkspace.value = false
+    }
   }
 }
 

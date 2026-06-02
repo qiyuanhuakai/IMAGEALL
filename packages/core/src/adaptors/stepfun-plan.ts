@@ -10,9 +10,11 @@ import type {
 import { providerManifests } from '../providers'
 import {
   assertApiKey,
+  createAuthOnlyHeaders,
   createBearerHeaders,
   fail,
   findProviderModel,
+  imageInputToBlob,
   imageInputToDataUrl,
   isDataUrl,
   isHttpUrl,
@@ -163,6 +165,52 @@ export class StepFunPlanAdaptor implements ImageProviderAdaptor {
       throw new Error('StepFun Plan prompt is required.')
     }
 
+    if (input.operation.kind === 'edit') {
+      const imageInput = requireImageInput(input)
+      if (!imageInput) {
+        throw new Error('StepFun Plan edit requires an image input.')
+      }
+
+      const imageBlob = imageInputToBlob(imageInput)
+      if (!imageBlob) {
+        throw new Error('StepFun Plan step-image-edit-2 requires a base64 or data URL image payload.')
+      }
+
+      const formData = new FormData()
+      formData.set('model', 'step-image-edit-2')
+      formData.set('prompt', prompt)
+      formData.set('response_format', toResponseFormat(input))
+      formData.set('image', imageBlob, imageInput.filename ?? 'input.png')
+
+      if (input.operation.seed !== undefined) {
+        formData.set('seed', String(input.operation.seed))
+      }
+
+      if (input.operation.negativePrompt) {
+        formData.set('negative_prompt', input.operation.negativePrompt)
+      }
+
+      if (typeof input.providerOptions?.textMode === 'boolean') {
+        formData.set('text_mode', String(input.providerOptions.textMode))
+      }
+
+      if (input.providerOptions?.steps !== undefined) {
+        formData.set('steps', String(input.providerOptions.steps))
+      }
+
+      if (input.providerOptions?.cfgScale !== undefined) {
+        formData.set('cfg_scale', String(input.providerOptions.cfgScale))
+      }
+
+      return {
+        url: `${getStepFunPlanBaseUrl(input)}/images/edits`,
+        method: 'POST',
+        bodyType: 'form-data',
+        headers: createAuthOnlyHeaders(apiKey),
+        body: formData,
+      }
+    }
+
     const body: Record<string, unknown> = {
       model: 'step-image-edit-2',
       prompt,
@@ -173,7 +221,7 @@ export class StepFunPlanAdaptor implements ImageProviderAdaptor {
       body.seed = input.operation.seed
     }
 
-    if (input.operation.kind === 'generate' && input.operation.size) {
+    if (input.operation.size) {
       const size = toStepImageEdit2Size(input.operation.size)
       if (size) {
         body.size = size
@@ -196,22 +244,8 @@ export class StepFunPlanAdaptor implements ImageProviderAdaptor {
       body.cfg_scale = input.providerOptions.cfgScale
     }
 
-    if (input.operation.kind === 'edit') {
-      const imageInput = requireImageInput(input)
-      if (!imageInput) {
-        throw new Error('StepFun Plan edit requires an image input.')
-      }
-
-      const image = resolveImage(imageInput)
-      if (!image) {
-        throw new Error('StepFun Plan step-image-edit-2 requires a URL or data URL image.')
-      }
-
-      body.image = image
-    }
-
     return {
-      url: `${getStepFunPlanBaseUrl(input)}/${input.operation.kind === 'generate' ? 'images/generations' : 'images/edits'}`,
+      url: `${getStepFunPlanBaseUrl(input)}/images/generations`,
       method: 'POST',
       bodyType: 'json',
       headers: createBearerHeaders(apiKey),

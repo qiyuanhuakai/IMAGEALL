@@ -128,7 +128,7 @@ function endpointForStepFun(input: UnifiedRunInput): '/images/generations' | '/i
     return '/images/generations'
   }
 
-  if (input.modelId === 'step-1x-medium') {
+  if (input.operation.kind === 'image2image') {
     return '/images/image2image'
   }
 
@@ -190,6 +190,21 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
         }
       } else if (!isValidUrlOrDataUrl(imageInput)) {
         errors.push('StepFun edit inputs must be a URL, base64 payload, or data URL.')
+      }
+    }
+
+    if (input.operation.kind === 'image2image') {
+      const imageInput = requireImageInput(input)
+
+      if (!imageInput) {
+        errors.push('StepFun image2image mode requires a reference image.')
+      } else if (!isValidUrlOrDataUrl(imageInput)) {
+        errors.push('StepFun image2image reference must be a URL, base64 payload, or data URL.')
+      }
+
+      const sourceWeight = input.providerOptions?.sourceWeight
+      if (sourceWeight !== undefined && (typeof sourceWeight !== 'number' || sourceWeight <= 0 || sourceWeight > 1)) {
+        errors.push('StepFun image2image source_weight must be in range (0, 1].')
       }
     }
 
@@ -257,15 +272,15 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
     const endpoint = endpointForStepFun(input)
     const url = `${getStepFunBaseUrl(input)}${endpoint}`
 
-    if (input.modelId === 'step-1x-edit') {
+    if (input.operation.kind === 'edit' && (input.modelId === 'step-1x-edit' || input.modelId === 'step-image-edit-2')) {
       const imageInput = requireImageInput(input)
       if (!imageInput) {
-        throw new Error('StepFun step-1x-edit requires image data.')
+        throw new Error(`StepFun ${input.modelId} requires image data.`)
       }
 
       const imageBlob = imageInputToBlob(imageInput)
       if (!imageBlob) {
-        throw new Error('StepFun step-1x-edit requires a base64 or data URL image payload.')
+        throw new Error(`StepFun ${input.modelId} requires a base64 or data URL image payload.`)
       }
 
       const formData = new FormData()
@@ -278,7 +293,7 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
         formData.set('seed', String(input.operation.seed))
       }
 
-      if (input.operation.size) {
+      if (input.modelId === 'step-1x-edit' && input.operation.size) {
         formData.set('size', toStepFunSize(input.modelId, input.operation.size) ?? '')
       }
 
@@ -288,6 +303,16 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
 
       if (input.providerOptions?.cfgScale !== undefined) {
         formData.set('cfg_scale', String(input.providerOptions.cfgScale))
+      }
+
+      if (input.modelId === 'step-image-edit-2') {
+        if (input.operation.negativePrompt) {
+          formData.set('negative_prompt', input.operation.negativePrompt)
+        }
+
+        if (typeof input.providerOptions?.textMode === 'boolean') {
+          formData.set('text_mode', String(input.providerOptions.textMode))
+        }
       }
 
       return {
@@ -324,16 +349,6 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
       body.cfg_scale = input.providerOptions.cfgScale
     }
 
-    if (input.modelId === 'step-image-edit-2') {
-      if (input.operation.negativePrompt) {
-        body.negative_prompt = input.operation.negativePrompt
-      }
-
-      if (typeof input.providerOptions?.textMode === 'boolean') {
-        body.text_mode = input.providerOptions.textMode
-      }
-    }
-
     if (input.operation.kind === 'generate' && input.modelId === 'step-1x-medium') {
       const styleReference = getStyleReference(input)
       if (styleReference) {
@@ -341,28 +356,19 @@ export class StepFunAdaptor implements ImageProviderAdaptor {
       }
     }
 
-    if (input.operation.kind === 'edit') {
+    if (input.operation.kind === 'image2image') {
       const imageInput = requireImageInput(input)
       if (!imageInput) {
-        throw new Error('StepFun edit requires an image input.')
+        throw new Error('StepFun image2image requires a reference image.')
       }
 
-      if (input.modelId === 'step-1x-medium') {
-        const sourceUrl = resolveStepFunImage(imageInput)
-        if (!sourceUrl) {
-          throw new Error('StepFun image2image requires a URL or data URL source.')
-        }
-
-        body.source_url = sourceUrl
-        body.source_weight = typeof input.providerOptions?.sourceWeight === 'number' ? input.providerOptions.sourceWeight : 0.5
-      } else {
-        const image = resolveStepFunImage(imageInput)
-        if (!image) {
-          throw new Error('StepFun step-image-edit-2 requires a URL or data URL image.')
-        }
-
-        body.image = image
+      const sourceUrl = resolveStepFunImage(imageInput)
+      if (!sourceUrl) {
+        throw new Error('StepFun image2image requires a URL or data URL source.')
       }
+
+      body.source_url = sourceUrl
+      body.source_weight = typeof input.providerOptions?.sourceWeight === 'number' ? input.providerOptions.sourceWeight : 0.5
     }
 
     return {

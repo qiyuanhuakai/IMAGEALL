@@ -2,12 +2,25 @@ import type {
   ExecutePreparedRunInput,
   NormalizedProviderError,
   PreparedRunPlan,
+  RestoredWorkspace,
   UnifiedRunInput,
   UnifiedRunResult,
   WorkbenchBootstrap,
+  WorkspaceStatus,
 } from '@imageall/core'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+export function resolveArtifactUri(uri: string): string {
+  if (uri.startsWith('__serve__:')) {
+    const relativePath = uri.slice('__serve__:'.length)
+    return `${API_BASE_URL}/api/serve/${relativePath}`
+  }
+  if (uri.startsWith('/api/serve/')) {
+    return uri
+  }
+  return uri
+}
 
 export async function fetchBootstrap(): Promise<WorkbenchBootstrap> {
   const response = await fetch(`${API_BASE_URL}/api/bootstrap`)
@@ -85,5 +98,17 @@ export async function executePreparedRun(input: ExecutePreparedRunInput): Promis
     throw new Error(payload.error?.message ?? payload.message ?? 'Failed to execute prepared run.')
   }
 
-  return payload.result
+   return payload.result
+}
+
+export async function checkWorkspaceStatus(path: string): Promise<WorkspaceStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/workspace/status?path=${encodeURIComponent(path)}`)
+
+  return readJsonOrThrow<WorkspaceStatus>(response, `Failed to check workspace status: ${response.status}`)
+}
+
+export async function restoreWorkspace(path: string): Promise<RestoredWorkspace> {
+  const response = await fetch(`${API_BASE_URL}/api/workspace/restore?path=${encodeURIComponent(path)}`)
+
+  return readJsonOrThrow<RestoredWorkspace>(response, `Failed to restore workspace: ${response.status}`)
 }

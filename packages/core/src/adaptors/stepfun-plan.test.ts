@@ -63,7 +63,7 @@ describe('StepFunPlanAdaptor', () => {
     })
   })
 
-  it('includes steps and cfg_scale in edit requests', async () => {
+  it('includes steps and cfg_scale in edit requests as multipart form-data', async () => {
     const input: UnifiedRunInput = {
       providerId: 'stepfun-plan',
       modelId: 'step-image-edit-2',
@@ -76,8 +76,9 @@ describe('StepFunPlanAdaptor', () => {
       },
       imageInputs: [
         {
-          kind: 'url',
-          value: 'https://example.com/source.png',
+          kind: 'data-url',
+          value: 'data:image/png;base64,ZmFrZQ==',
+          filename: 'source.png',
         },
       ],
       providerOptions: {
@@ -89,15 +90,16 @@ describe('StepFunPlanAdaptor', () => {
     const request = await stepfunPlanAdaptor.buildRequest(input)
 
     expect(request.url).toBe('https://api.stepfun.com/step_plan/v1/images/edits')
-    expect(request.body).toEqual({
-      model: 'step-image-edit-2',
-      prompt: 'Add text overlay',
-      response_format: 'url',
-      negative_prompt: 'blurry',
-      image: 'https://example.com/source.png',
-      steps: 15,
-      cfg_scale: 3.0,
-    })
+    expect(request.bodyType).toBe('form-data')
+    expect(request.body).toBeInstanceOf(FormData)
+    const formData = request.body as FormData
+    expect(formData.get('model')).toBe('step-image-edit-2')
+    expect(formData.get('prompt')).toBe('Add text overlay')
+    expect(formData.get('response_format')).toBe('url')
+    expect(formData.get('negative_prompt')).toBe('blurry')
+    expect(formData.get('steps')).toBe('15')
+    expect(formData.get('cfg_scale')).toBe('3')
+    expect(formData.get('image')).toBeInstanceOf(Blob)
   })
 
   it('validates steps range for step-image-edit-2', () => {

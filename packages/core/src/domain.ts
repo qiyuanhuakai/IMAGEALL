@@ -1,6 +1,6 @@
 export type LocaleCode = 'en' | 'zh-CN'
 
-export type OperationKind = 'generate' | 'edit' | 'upscale'
+export type OperationKind = 'generate' | 'edit' | 'image2image' | 'upscale'
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
@@ -80,6 +80,12 @@ export interface EditOperationSpec extends OperationSpecBase {
   maskArtifactId?: string
 }
 
+export interface Image2imageOperationSpec extends OperationSpecBase {
+  kind: 'image2image'
+  sourceArtifactId: string
+  sourceWeight?: number
+}
+
 export interface UpscaleOperationSpec extends OperationSpecBase {
   kind: 'upscale'
   sourceArtifactId: string
@@ -89,6 +95,7 @@ export interface UpscaleOperationSpec extends OperationSpecBase {
 export type OperationSpec =
   | GenerateOperationSpec
   | EditOperationSpec
+  | Image2imageOperationSpec
   | UpscaleOperationSpec
 
 export interface RunLogEntry {
@@ -134,6 +141,7 @@ export interface ProviderOptionDefinition {
     label: string
   }>
   appliesToModels?: string[]
+  appliesToOperations?: OperationKind[]
 }
 
 export interface ProviderModelManifest {
@@ -145,6 +153,7 @@ export interface ProviderModelManifest {
     promptMaxLength?: number
     supportedAspectRatios?: string[]
     sizePresets?: Array<{ width: number; height: number }>
+    supportsCustomSize?: boolean
   }
   featureFlags?: {
     negativePrompt?: boolean
@@ -170,6 +179,7 @@ export interface ProviderManifest {
   capabilities: {
     supportsGenerate: boolean
     supportsEdit: boolean
+    supportsImage2image?: boolean
     supportsUpscale?: boolean
     supportsMultiImage?: boolean
     supportsNegativePrompt?: boolean
@@ -216,7 +226,10 @@ export interface UnifiedRunInput {
   providerId: string
   modelId: string
   auth: {
+    /** Plaintext API key (legacy, still supported) */
     apiKey?: string
+    /** Reference to server-side stored key (preferred) */
+    keyRef?: string
   }
   imageInputs?: ImageInputSource[]
   providerOptions?: Record<string, unknown>
@@ -247,8 +260,19 @@ export interface PreparedRunPlan {
 export interface ExecutePreparedRunInput {
   planId: string
   auth?: {
+    /** Plaintext API key (legacy, still supported) */
     apiKey?: string
+    /** Reference to server-side stored key (preferred) */
+    keyRef?: string
   }
+}
+
+export interface KeyReference {
+  keyRef: string
+  providerId: string
+  label?: string
+  createdAt: string
+  lastUsedAt?: string
 }
 
 export interface NormalizedProviderError {
@@ -275,4 +299,33 @@ export interface WorkbenchBootstrap {
   artifacts: Artifact[]
   runs: Run[]
   selectedWorkspaceId: string
+}
+
+export interface WorkspaceStatus {
+  exists: boolean
+  artifactCount: number
+  runCount: number
+  lastModified?: string
+  workspaceId?: string
+}
+
+export interface RestoredWorkspace {
+  workspace: Workspace
+  artifacts: Artifact[]
+  runs: Run[]
+  restoredAt: string
+  warnings: string[]
+}
+
+export interface WorkspaceMetadata {
+  id: string
+  name: string
+  locale: LocaleCode
+  createdAt: string
+  updatedAt: string
+  selectedArtifactId?: string
+  compareArtifactIds: string[]
+  activeOperation: OperationKind
+  activeProviderId: string
+  activeModelId: string
 }
